@@ -15,7 +15,7 @@ import warnings
 import numpy as np
 import pytest
 
-from iquana import MultiFitter, IQuana, examples
+from iquana import IQuana, MultiFitter, examples
 
 TRUTH = {'radius': 45.0, 'scale': 0.02, 'sld': 4.0}
 

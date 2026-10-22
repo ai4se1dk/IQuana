@@ -7,8 +7,8 @@ from unittest.mock import Mock
 from iquana import (
     PD_DEFAULTS,
     PD_DISTRIBUTION_TYPES,
-    ParameterManager,
     IQuana,
+    ParameterManager,
 )
 from tests.helpers import create_decay_data_file
 

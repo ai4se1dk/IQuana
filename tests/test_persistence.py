@@ -435,7 +435,7 @@ def test_wrong_format(fitter, tmp_path):
 def test_newer_schema_version_is_refused(fitter, tmp_path):
     _, path = round_trip(fitter, tmp_path)
     _corrupt(path, lambda d: d['schema'].update(version=SCHEMA_VERSION + 1))
-    with pytest.raises(AnalysisFileError, match='newer iquana'):
+    with pytest.raises(AnalysisFileError, match='newer IQuana'):
         IQuana.load_analysis(path)
 
 

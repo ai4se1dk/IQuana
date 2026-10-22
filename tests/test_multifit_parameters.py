@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 import pytest
 
-from iquana import MultiFitter, IQuana, examples
+from iquana import IQuana, MultiFitter, examples
 from iquana.modeling.constraints import ConstraintError, ExpressionError
 
 

@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import plotly.graph_objects as go
 
-from iquana import PosteriorSummary, IQuana
+from iquana import IQuana, PosteriorSummary
 from iquana.fitting.bumps_engine import _compute_diagnostics
 from iquana.plotting import (
     plot_param_correlations,
