@@ -1,0 +1,384 @@
+<p align="center">
+  <a href="https://ai4se1dk.github.io/IQuana/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="iquana-banner-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="iquana-banner-light.png">
+      <img src="iquana-banner-light.png" alt="IQuana — Small-Angle Neutron Scattering model fitting" width="360">
+    </picture>
+  </a>
+</p>
+
+# IQuana - SANS Model Fitter
+
+[![Tests](https://github.com/ai4se1dk/IQuana/actions/workflows/ci.yml/badge.svg)](https://github.com/ai4se1dk/IQuana/actions/workflows/ci.yml)
+[![Docs](https://github.com/ai4se1dk/IQuana/actions/workflows/docs.yml/badge.svg)](https://ai4se1dk.github.io/IQuana/)
+[![PyPI badge](https://img.shields.io/pypi/v/IQuana.svg)](https://pypi.python.org/pypi/IQuana)
+[![Docs badge](https://img.shields.io/badge/docs-built-blue)](https://ai4se1dk.github.io/IQuana/)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/2ac22dd161034cdebb7478c395aff59c)](https://app.codacy.com/gh/ai4se1dk/IQuana/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+
+
+A flexible, model-agnostic Python template for fitting Small-Angle Neutron Scattering (SANS) data using the SasModels library.
+
+## Features
+
+- **Model-Agnostic Design**: Works with any model from the SasModels library (cylinder, sphere, core_shell, etc.)
+- **Multiple Fitting Engines**: Supports both BUMPS (default) and LMFit optimization engines
+- **Flexible Data Loading**: Reads CSV, XML, and HDF5 formats via sasdata, including files holding several datasets — pick one with `load_data(path, dataset=...)` by index or name
+- **Example Data Built In**: A curated set of ready-to-fit datasets plus a simulator that generates data  — `examples.load_fitter('silica_spheres')` or `examples.simulate('sphere', radius=50)`
+- **Polydispersity and Custom Models**: Size distributions on any polydisperse parameter via `set_pd_param()`, and your own SasModels plugin models loaded by file path
+- **Resolution Control**: Choose how instrument smearing is applied — dQ from the data, none, custom pinhole (`dq_over_q`) or slit — with `set_resolution()`
+- **Data Weighting**: Choose which σ divides each residual — the data's dI, √|I|, |I| or none — with `set_weighting()`, matching SasView's Fit Page; this is also what lets the bumps engine and `fit_bayesian()` fit data without uncertainties
+- **Q-Range Restriction**: Fit only a chosen [qmin, qmax] window (e.g. trim beam-stop or background-dominated points)
+- **Dataset Arithmetic**: Add, subtract, multiply, and divide datasets (or scale by constants) with propagated uncertainties via `data_ops` — e.g. background subtraction and transmission correction before fitting
+- **User-Friendly Parameter Management**: Easy-to-use interface for setting parameter values, bounds, and fitting flags
+- **Theory Preview**: See the model at the current parameters before fitting — `plot_model()` for data, curve and residuals, `calculate()` for the intensities on any Q grid, and `compare()` to overlay several parameter sets
+- **Interactive Visualization**: Automatic plotting of data, fitted model, and residuals with Plotly
+- **Simultaneous Fitting**: Fit several datasets together with shared or related parameters via `MultiFitter` — contrast variation, temperature series and multi-configuration data, with per-dataset models, Q ranges and resolution, plus constraints such as `'0.8 * h2o.scale'`
+- **Bayesian Analysis**: Posterior sampling with BUMPS DREAM (MCMC) plus corner, marginal, predictive-band, correlation, and trace plots
+- **P(r) Inversion**: Model-free pair distance distribution analysis (indirect Fourier transform) via `pr_inversion` — D_max exploration, automatic regularization/term selection, and Rg/I(0)/positivity diagnostics
+- **Fit-Quality Reporting**: Reduced χ² alongside raw χ², point and parameter counts, covariance/correlation matrices, a convergence verdict and a warning when a fitted parameter rests on a bound — all via `fitter.get_fit_report()`, which renders as a table in a notebook, as text, or as Markdown
+- **Result Export**: Save fitted parameters and curves to CSV files
+- **Save, Reload and Share**: Store the whole analysis (data source, model, parameters, links, resolution, result) as JSON with `save_analysis()` / `IQuana.load_analysis()`, or write a single shareable HTML report with `report()`
+
+## Installation
+
+### Option 1: Using pip (recommended for users)
+
+```bash
+# Clone the repository
+git clone https://github.com/ai4se1dk/IQuana.git
+cd IQuana
+
+# Install the package
+pip install -e .
+
+# Or install with development dependencies
+pip install -e ".[dev]"
+
+# The Jupyter stack is optional - only needed to run notebooks/
+pip install -e ".[notebooks]"
+```
+
+### Option 2: Using Pixi (recommended for development)
+
+```bash
+# Clone the repository
+git clone https://github.com/ai4se1dk/IQuana.git
+cd IQuana
+
+# Install dependencies with Pixi
+pixi install
+
+# Run tests
+pixi run test
+
+# Run demo notebook
+pixi run run-demo
+```
+
+## Quick Start
+
+No data of your own yet? Start from a bundled example:
+
+```python
+from iquana import examples
+
+examples.describe()                              # see what's available
+fitter = examples.load_fitter('silica_spheres')  # data + model + parameters
+result = fitter.fit()
+fitter.plot_results()
+```
+
+Or simulate data, so you can check the fit recovers it:
+
+```python
+data = examples.simulate('sphere', radius=50, noise=0.02, seed=0)
+data.truth['radius']    # 50.0
+```
+
+See the [Example Data guide](docs/examples.md) for the full collection.
+
+With your own data:
+
+```python
+from iquana import IQuana
+
+# Create fitter instance
+fitter = IQuana()
+
+# Load your data
+fitter.load_data('my_sans_data.csv')
+
+# Set the model (any model from SasModels!)
+fitter.set_model('cylinder')
+
+# Optionally restrict the Q range used for fitting
+fitter.set_q_range(qmin=0.01, qmax=0.3)
+
+# View initial parameter values
+fitter.get_params()
+
+# Configure parameters for fitting
+fitter.set_param('radius', value=20, min=1, max=100, vary=True)
+fitter.set_param('length', value=400, min=10, max=1000, vary=True)
+fitter.set_param('scale', value=0.1, min=0, max=1, vary=True)
+fitter.set_param('background', value=0.01, min=0, max=1, vary=True)
+
+# View current parameters
+fitter.get_params()
+
+# Check the starting values against the data before fitting
+fitter.plot_model()
+
+# Perform the fit (using BUMPS by default)
+result = fitter.fit(engine='bumps', method='amoeba')
+
+# Visualize results
+fitter.plot_results(show_residuals=True)
+
+# Judge the fit: reduced chi-squared, correlations, bound checks
+report = fitter.get_fit_report()
+print(report)
+
+# Save results
+fitter.save_results('fit_results.csv')
+
+# Save the whole analysis, and reopen it later or elsewhere
+fitter.save_analysis('my_analysis.json')
+fitter = IQuana.load_analysis('my_analysis.json')
+
+# One shareable document: settings, tables and the plot
+fitter.report('my_analysis.html')
+```
+
+## Switching Models
+
+The fitter is completely model-agnostic. Simply load a different model:
+
+```python
+# Try with a sphere model instead
+fitter.set_model('sphere')
+fitter.get_params()  # See different parameters!
+
+fitter.set_param('radius', value=25, min=5, max=100, vary=True)
+result = fitter.fit()
+```
+
+## Switching Fitting Engines
+
+```python
+# Use BUMPS (default)
+result = fitter.fit(engine='bumps', method='amoeba')
+
+# Or use LMFit
+result = fitter.fit(engine='lmfit', method='leastsq')
+```
+
+## Working with Structure Factors
+
+Combine any SasModels form factor with an interaction model to capture correlated systems.
+
+```python
+fitter.set_model('sphere')
+
+# Apply a structure factor (creates sphere@hardsphere product model)
+fitter.set_structure_factor('hardsphere', radius_effective_mode='link_radius')
+
+# Inspect linked parameters and run the fit as usual
+fitter.get_params()
+result = fitter.fit()
+
+# Remove the structure factor to go back to the pure form factor
+fitter.remove_structure_factor()
+```
+
+- **Structure factors:** queried from sasmodels at runtime — call `get_structure_factors()` for the full list (currently includes `hardsphere`, `hayter_msa`, `squarewell`, `stickyhardsphere`, `two_yukawa`).
+- **Radius handling:** use `radius_effective_mode='link_radius'` to keep `radius_effective` equal to the form-factor `radius`, or leave the default `unconstrained` to fit it independently.
+- **State helpers:** `get_structure_factor()` returns the active structure factor so notebooks/scripts can branch as needed.
+
+## Combining Models
+
+Describe a dataset with several models at once — for example a low-Q diffuse
+feature plus a high-Q peak — fitted simultaneously against one dataset:
+
+```python
+fitter = IQuana()
+fitter.load_data('data.csv')
+
+# Combine models; parameters get friendly per-model prefixes
+fitter.set_models('dab', 'peak_lorentz')
+fitter.set_param('dab_cor_length', value=50, min=1, max=500, vary=True)
+fitter.set_param('peak_lorentz_peak_pos', value=0.1, min=0.01, max=0.5, vary=True)
+fitter.set_param('background', value=0.001, min=0, max=0.1, vary=True)
+
+result = fitter.fit(engine='bumps')
+
+# See which feature each model accounts for
+fitter.plot_results(show_components=True)
+```
+
+The combined intensity is
+
+$I(q) = \text{scale} \cdot \sum_i \text{scale}_i \cdot I_i(q) + \text{background}$
+
+so the global `scale` and `background` are shared by all components natively,
+while each component has its own `<model>_scale`.
+
+**Custom names (monikers)** — for long model names, duplicates, or physics labels:
+
+```python
+fitter.set_models(small='sphere', large='sphere', shared=['sld', 'sld_solvent'])
+fitter.set_param('small_radius', value=20, vary=True)
+fitter.set_param('large_radius', value=200, vary=True)
+```
+
+**Sharing parameters** — any name in `shared=[...]` that exists in ≥ 2
+components becomes a single unprefixed parameter driving all of them
+(`sld` above). Polydispersity configuration stays per-component under the
+prefixed names.
+
+**Component curves** — after fitting a `'+'` mixture, `plot_results(show_components=True)`
+overlays one dashed curve per component, each drawn as
+`scale · part_scale · I_part(q)` (background shown implicitly in the total).
+
+> **Advanced:** the raw sasmodels expression syntax is also available and keeps
+> sasmodels' native `A_`/`B_` names: `fitter.set_model('dab+peak_lorentz')`.
+> For after-the-fact or asymmetric sharing, use equality links:
+> `fitter.link_params('large_sld', to='small_sld')` and
+> `fitter.unlink_params('large_sld')`. Composite models and parameter links
+> currently require the `bumps` engine.
+
+## Simultaneous Fitting
+
+Fit several datasets at once, sharing the parameters they have in common:
+
+```python
+from iquana import MultiFitter
+
+fit = MultiFitter()
+fit.add('h2o', 'contrast_h2o.xml', model='sphere')
+fit.add('d2o', 'contrast_d2o.xml', model='sphere')
+
+for name in ('h2o', 'd2o'):
+    fit[name].set_param('radius', value=45, min=10, max=100, vary=True)
+    fit[name].set_param('scale', value=0.02, min=0.001, max=0.1, vary=True)
+    fit[name].set_param('background', value=0.01, min=0, max=0.1, vary=True)
+
+fit.share('radius', 'scale')             # one radius and scale across both curves
+fit.constrain('h2o.sld_solvent', -0.56)  # known solvent contrasts
+fit.constrain('d2o.sld_solvent', 6.34)
+
+fit.describe()                 # datasets, relationships, free-parameter count
+result = fit.fit()
+print(fit.get_fit_report())
+fit.plot_results()             # one data/fit + residual panel per dataset
+fit.save_results('contrast_results')
+```
+
+Parameters are addressed as `dataset.parameter`. Beyond `share()`, use
+`link_params('cyl.radius', to='sph.radius')` to make one parameter follow
+another, and `constrain('d2o.scale', '0.8 * h2o.scale')` for a fixed value or
+an arithmetic relationship. Each dataset keeps its own model, Q range, mask and
+resolution — nothing is merged or interpolated — and a shared parameter costs
+exactly one degree of freedom.
+
+See the [Simultaneous Fitting guide](docs/multifit.md) for choosing what to
+share, how constraint bounds are enforced, and what dataset weights mean for
+the reported uncertainties.
+
+## Bayesian Analysis
+
+Sample the full posterior distribution of the varying parameters with the
+DREAM MCMC sampler (built into BUMPS — no extra dependencies):
+
+```python
+fitter.set_model('sphere')
+fitter.set_param('radius', value=50, min=10, max=200, vary=True)
+fitter.set_param('scale', value=0.1, min=0.01, max=1.0, vary=True)
+
+# Run the Bayesian fit (prints point estimates + credible intervals + diagnostics)
+result = fitter.fit_bayesian(samples=10000, burn=200)
+
+# Corner plot of the posterior
+fitter.plot_posterior_pairs()
+
+# More displays
+fitter.plot_param_distribution('radius')      # marginal posterior
+fitter.plot_posterior_predictive()            # 95% credible band over the data
+fitter.plot_param_correlations()              # correlation heatmap
+fitter.plot_trace()                           # MCMC chain traces
+
+# Raw chain access / export
+posterior = fitter.get_posterior()
+posterior.save_posterior_csv('posterior_chain.csv')
+```
+
+See the [User Guide](https://ai4se1dk.github.io/IQuana/usage/) for details.
+
+### Available Methods
+
+**BUMPS methods:**
+- `'amoeba'` - Nelder-Mead simplex (default, robust)
+- `'lm'` - Levenberg-Marquardt
+- `'newton'` - Newton's method
+- `'de'` - Differential evolution
+
+**LMFit methods:**
+- `'leastsq'` - Levenberg-Marquardt (default)
+- `'least_squares'` - Trust Region Reflective
+- `'differential_evolution'` - Global optimizer
+- `'powell'`, `'nelder'`, etc.
+
+## Demo Notebooks
+
+- [notebooks/iquana_demo.ipynb](notebooks/iquana_demo.ipynb) — comprehensive demonstration of the fitting workflow with examples.
+- [notebooks/example_datasets.ipynb](notebooks/example_datasets.ipynb) — the bundled example datasets and the data simulator, including checking that a fit recovers the known truth.
+- [notebooks/composite_models.ipynb](notebooks/composite_models.ipynb) — several models against one dataset with `set_models()`: per-component curves and shared parameters.
+- [notebooks/data_operations_demo.ipynb](notebooks/data_operations_demo.ipynb) — dataset arithmetic: background subtraction, rescaling and combining datasets with propagated uncertainties, then fitting the result.
+- [notebooks/bayesian_sampling.ipynb](notebooks/bayesian_sampling.ipynb) — Bayesian posterior sampling API (`fit_bayesian()`) and the associated posterior plots.
+- [notebooks/pr_inversion_demo.ipynb](notebooks/pr_inversion_demo.ipynb) — model-free P(r) inversion: D_max exploration, automatic inversion, and diagnostics.
+- [notebooks/resolution_control.ipynb](notebooks/resolution_control.ipynb) — explicit resolution (smearing) control: the four modes, what each hands sasmodels, and what ignoring resolution costs.
+- [notebooks/sasmodels-basic.ipynb](notebooks/sasmodels-basic.ipynb) — the same kind of fit done directly with sasmodels and BUMPS, without IQuana, for comparison.
+- [notebooks/simultaneous_fitting.ipynb](notebooks/simultaneous_fitting.ipynb) — fitting several datasets together with `MultiFitter`: contrast variation, shared parameters, constraints, and joint diagnostics.
+- [notebooks/four_form_factors.ipynb](notebooks/four_form_factors.ipynb) — fitting a sum of four form factors against one dataset: what to fix, why a global optimizer is needed, and how to read the parameter correlations that remain.
+
+
+## Design Philosophy
+
+This implementation follows a **template pattern** where:
+
+1. The core fitting logic is abstracted into a reusable class
+2. Models are loaded dynamically from SasModels - no hardcoded model assumptions
+3. Parameters are discovered automatically from the model definition
+4. Multiple optimization engines are supported through a unified interface
+5. The user maintains full control over parameter initialization and bounds
+
+## Implementation Details
+
+### Engine Adapters
+
+The fitter implements adapter patterns for both BUMPS and LMFit:
+
+- **BUMPS**: Uses native `sasmodels.bumps_model` integration
+- **LMFit**: Uses `sasmodels.direct_model.DirectModel` with a custom residual function
+
+### Parameter Management
+
+Parameters are stored internally with:
+- `value`: Current/initial value
+- `min`, `max`: Bounds
+- `vary`: Fitting flag
+- `description`: From model metadata
+
+This allows the fitter to work with any model without prior knowledge of its parameters.
+
+## License
+
+BSD 3-Clause License. See [LICENSE](LICENSE) for the full text.
+
+## References
+
+- SasModels: https://github.com/SasView/sasmodels
+- BUMPS: https://github.com/bumps/bumps
+- LMFit: https://lmfit.github.io/lmfit-py/
+- Plotly: https://plotly.com/python/

@@ -1,0 +1,465 @@
+# API Reference
+
+## Module-level helpers
+
+::: iquana.fitter.get_all_models
+::: iquana.fitter.get_structure_factors
+
+## IQuana
+
+The main class for SANS data fitting.
+
+::: iquana.fitter.IQuana
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - load_data
+        - set_data
+        - set_q_range
+        - reset_q_range
+        - get_q_range
+        - set_resolution
+        - get_resolution
+        - set_weighting
+        - get_weighting
+        - set_model
+        - set_models
+        - link_params
+        - unlink_params
+        - get_links
+        - get_components
+        - set_structure_factor
+        - get_structure_factor
+        - remove_structure_factor
+        - get_params
+        - set_param
+        - calculate
+        - plot_model
+        - compare
+        - fit
+        - fit_bayesian
+        - get_fit_report
+        - get_posterior
+        - plot_results
+        - plot_posterior_pairs
+        - plot_param_distribution
+        - plot_posterior_predictive
+        - plot_param_correlations
+        - plot_trace
+        - save_results
+        - save_analysis
+        - load_analysis
+        - report
+        - supports_polydispersity
+        - get_polydisperse_parameters
+        - set_pd_param
+        - get_pd_param
+        - enable_polydispersity
+        - is_polydispersity_enabled
+        - get_pd_params
+        - get_varying_pd_params
+
+### Composite model naming
+
+`set_models()` exposes parameters under friendly alias names; `set_model()`
+with a composite expression keeps sasmodels' canonical names. Both spellings
+are accepted by `set_param()`, `link_params()`, `set_pd_param()` and
+`get_pd_param()`. For `set_models('dab', 'peak_lorentz')`:
+
+| Friendly alias (`set_models`) | Canonical name (`set_model`) |
+|---|---|
+| `scale`, `background` | `scale`, `background` (shared natively) |
+| `dab_scale` | `A_scale` |
+| `dab_cor_length` | `A_cor_length` |
+| `peak_lorentz_scale` | `B_scale` |
+| `peak_lorentz_peak_pos` | `B_peak_pos` |
+| `peak_lorentz_peak_hwhm` | `B_peak_hwhm` |
+
+With keyword monikers (`set_models(small='sphere', large='sphere')`) the
+prefix is the moniker (`small_radius` → `A_radius`). Parameters listed in
+`shared=` collapse to a single unprefixed name (`sld` → `A_sld` + `B_sld`);
+their prefixed aliases remain addressable for polydispersity configuration.
+
+## MultiFitter
+
+Simultaneous, constrained fitting of several datasets through one bumps problem.
+See the [Simultaneous Fitting](multifit.md) guide for the workflow and for what
+sharing, linking and constraining each mean.
+
+::: iquana.multifit.MultiFitter
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - add
+        - add_fitter
+        - remove
+        - share
+        - unshare
+        - link_params
+        - unlink_params
+        - constrain
+        - unconstrain
+        - set_param
+        - set_dataset_weight
+        - get_constraints
+        - get_sharing
+        - get_parameter_table
+        - describe
+        - calculate
+        - plot_model
+        - fit
+        - get_fit_report
+        - plot_results
+        - save_results
+
+## DatasetHandle
+
+Returned by `MultiFitter.add()` and by `fit['name']`. Configures one dataset of
+a joint analysis. Deliberately a facade rather than the underlying
+`IQuana`: fitting, persistence and reporting belong to the analysis as a
+whole, and a child that could fit itself while enrolled in one would produce a
+result nobody asked for.
+
+::: iquana.multifit.DatasetHandle
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - set_model
+        - set_models
+        - set_structure_factor
+        - remove_structure_factor
+        - set_param
+        - set_pd_param
+        - enable_polydispersity
+        - link_params
+        - unlink_params
+        - set_q_range
+        - reset_q_range
+        - set_resolution
+        - get_params
+        - get_pd_param
+        - get_pd_params
+        - get_polydisperse_parameters
+        - get_varying_pd_params
+        - get_q_range
+        - get_resolution
+        - get_structure_factor
+        - get_components
+        - get_links
+
+## MultiFitResult
+
+The result of a simultaneous fit. Carries the joint statistics, every
+parameter with its status and uncertainty, the joint covariance over the free
+parameters, and a per-dataset breakdown.
+
+::: iquana.multi_results.MultiFitResult
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - weighted
+        - corr
+        - root_parameters
+        - free_parameters
+        - to_dict
+
+::: iquana.multi_results.MultiParameter
+    options:
+      show_root_heading: true
+      show_source: true
+
+::: iquana.multi_results.DatasetResult
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - rms_residual
+        - mean_squared_residual
+        - to_dict
+
+## MultiFitReport
+
+Self-rendering summary returned by `MultiFitter.get_fit_report()`.
+
+::: iquana.multi_results.MultiFitReport
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - strongly_correlated
+        - to_markdown
+        - to_dict
+
+## Constraint graph
+
+The backend-independent parameter graph behind a simultaneous fit: which
+parameters are the same quantity, which are computed from others, and how many
+independent coordinates that leaves. Deliberately free of any optimizer, so the
+same graph can drive other backends later.
+
+::: iquana.modeling.constraints
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - ParameterRef
+        - ParameterDescriptor
+        - ShareGroup
+        - ConstraintSpec
+        - ParameterClass
+        - CompiledGraph
+        - compile_graph
+        - parse_expression
+        - parse_reference
+        - ConstraintError
+        - ExpressionError
+
+## FitReport
+
+Goodness-of-fit summary returned by `IQuana.get_fit_report()`: the χ²
+statistics, the parameter table, the covariance and correlation matrices, the
+convergence verdict and any parameter resting on a bound. Renders itself as a
+table in a notebook, as plain text, and as Markdown.
+
+::: iquana.report.FitReport
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - from_contract
+        - corr
+        - strongly_correlated
+        - to_markdown
+        - to_dict
+        - to_json
+
+## Report
+
+The analysis document returned by `IQuana.report()`: the settings block, the
+`FitReport` tables and the fit plot, as one HTML page or Markdown document.
+
+::: iquana.reporting.Report
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - to_markdown
+        - to_html
+        - write
+
+## PosteriorSummary
+
+Posterior sample chain and per-parameter statistics returned by `fit_bayesian()`.
+
+::: iquana.results.PosteriorSummary
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - index_of
+        - format_summary
+        - save_posterior_csv
+
+## PosteriorDigest
+
+Posterior statistics without the sample chain: what an analysis loaded from a
+file carries. The statistics tables render exactly as they would after a fit,
+while displays that need the samples themselves raise instead of inventing them.
+
+::: iquana.results.PosteriorDigest
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - from_summary
+        - format_summary
+
+## data_ops
+
+Dataset arithmetic: add, subtract, multiply and divide datasets (or a dataset
+and a scalar) with propagated uncertainties, returning fit-ready `Data1D`
+objects.
+
+::: iquana.data.ops
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - load
+        - add
+        - subtract
+        - multiply
+        - divide
+
+
+## pr_inversion
+
+Model-free P(r) inversion (indirect Fourier transform): recover the pair
+distance distribution function from I(q), with automatic parameter
+estimation and D_max exploration.
+
+::: iquana.inversion
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - invert
+        - auto_invert
+        - estimate_alpha
+        - estimate_n_terms
+        - explore_dmax
+        - PrResult
+        - DmaxScan
+        - AlphaEstimate
+        - NTermsEstimate
+        - InsufficientDataError
+        - PrEstimationError
+        - DEFAULT_N_TERMS
+        - DEFAULT_R_POINTS
+        - REGULARIZERS
+        - SASVIEW_N_REG
+
+## examples
+
+Curated example datasets and a simulator for generating data.
+See the [Example Data](examples.md) guide for the full collection.
+
+::: iquana.examples
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - list_examples
+        - describe
+        - get_example
+        - example_path
+        - load
+        - load_fitter
+        - simulate
+        - simulate_pair
+        - Example
+
+
+## Console output
+
+Methods such as `load_data`, `set_model` and `fit` report what they did through
+the `iquana` logger rather than with `print`, so the running commentary can
+be turned off:
+
+```python
+import iquana
+
+iquana.set_verbosity('quiet')   # keep warnings, drop the progress messages
+iquana.set_verbosity('info')    # back to the default
+```
+
+Tables you ask for explicitly - `get_params()`, `get_pd_params()`,
+`examples.describe()` - are printed either way; they are the result of the call
+rather than a side effect of it.
+
+::: iquana.console
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - set_verbosity
+
+## ParameterManager
+
+Internal class for managing model parameters and polydispersity settings.
+
+::: iquana.modeling.parameters.ParameterManager
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - initialize_parameters
+        - get_parameter_names
+        - get_parameter
+        - set_parameter
+        - get_polydisperse_parameters
+        - has_polydisperse_parameters
+        - set_pd_param
+        - get_pd_param
+        - toggle_pd_visibility
+        - is_pd_enabled
+        - get_pd_params_for_fitting
+        - display_pd_params
+
+## PolydispersityManager
+
+Internal class for managing per-parameter polydispersity state.
+
+::: iquana.modeling.polydispersity.PolydispersityManager
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - initialize
+        - get_parameters
+        - has_parameters
+        - set_param
+        - get_param
+        - set_enabled
+        - is_enabled
+        - get_fitting_params
+        - get_varying_params
+        - display
+        - backup
+        - restore
+        - has_backup
+        - clear
+
+## StructureFactorManager
+
+Internal class for managing structure factor selection and parameter backup/restore.
+
+::: iquana.modeling.structure_factor.StructureFactorManager
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - apply
+        - remove
+        - backup_params
+        - restore_params
+        - has_backup
+        - clear
+
+::: iquana.modeling.structure_factor.default_parameter_bounds
+    options:
+      show_root_heading: true
+      show_source: true
+
+## Polydispersity Constants
+
+The following constants are available in `iquana.modeling.parameters`:
+
+### PD_DISTRIBUTION_TYPES
+
+```python
+PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
+```
+
+Supported polydispersity distribution types:
+
+| Type | Description |
+|------|-------------|
+| `gaussian` | Gaussian/normal distribution (default) |
+| `rectangle` | Uniform/rectangular distribution |
+| `lognormal` | Log-normal distribution |
+| `schulz` | Schulz distribution (common for polymers) |
+| `boltzmann` | Boltzmann distribution |
+
+### Default Values
+
+| Constant | Default Value | Description |
+|----------|---------------|-------------|
+| `DEFAULT_PD_WIDTH` | `0.0` | Default polydispersity width (monodisperse) |
+| `DEFAULT_PD_N` | `35` | Default number of quadrature points |
+| `DEFAULT_PD_NSIGMA` | `3.0` | Default number of sigmas to include |
+| `DEFAULT_PD_TYPE` | `'gaussian'` | Default distribution type |

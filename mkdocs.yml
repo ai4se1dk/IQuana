@@ -1,0 +1,63 @@
+site_name: IQuana Documentation
+site_description: A flexible template for fitting SANS data with SasModels
+site_author: IQuana contributors
+repo_url: https://github.com/ai4se1dk/IQuana
+repo_name: ai4se1dk/IQuana
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/images/iquana-icon.svg
+  favicon: assets/images/iquana-icon.svg
+  # Cinder fonts (Open Sans, Inter, Hack) are loaded by stylesheets/extra.css
+  font: false
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_root_heading: true
+            show_source: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Example Data: examples.md
+  - User Guide: usage.md
+  - Simultaneous Fitting: multifit.md
+  - Custom Models: custom_models.md
+  - API Reference: api.md
+  - Developer Guide: developer.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
