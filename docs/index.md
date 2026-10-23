@@ -1,10 +1,11 @@
-# IQuana
+![IQuana](assets/images/iquana-banner-light.png#only-light)
+![IQuana](assets/images/iquana-banner-dark.png#only-dark)
 
 A flexible, model-agnostic Python template for fitting Small-Angle Neutron Scattering (SANS) data using the SasModels library.
 
 ## Overview
 
-IQuana provides a unified interface for fitting SANS data using different optimization engines (BUMPS, LMFit) with any model from the SasModels library. It is designed to be flexible and easy to use, allowing researchers to focus on data analysis rather than writing fitting code.
+IQuana provides a unified interface for analysing and fitting SANS data using different optimization engines (BUMPS, LMFit) with any model from the SasModels library. It is designed to be flexible and easy to use, allowing researchers to focus on data analysis rather than writing fitting code.
 
 ## Key Features
 
