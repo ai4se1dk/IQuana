@@ -324,8 +324,8 @@ See the [User Guide](https://ai4se1dk.github.io/IQuana/usage/) for details.
 - `'de'` - Differential evolution
 
 **LMFit methods:**
-- `'leastsq'` - Levenberg-Marquardt (default)
-- `'least_squares'` - Trust Region Reflective
+- `'least_squares'` - Trust Region Reflective (default, respects bounds)
+- `'leastsq'` - Levenberg-Marquardt (ignores bounds; warns if the fit leaves them)
 - `'differential_evolution'` - Global optimizer
 - `'powell'`, `'nelder'`, etc.
 

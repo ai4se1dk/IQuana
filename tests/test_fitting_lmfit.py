@@ -53,6 +53,19 @@ class TestLMFitFitting(unittest.TestCase):
                 self.skipTest('lmfit not installed')
             raise
 
+    def test_default_method_respects_bounds(self):
+        # The data wants a radius far below min=10; the default must not go there.
+        result = self.fitter.fit(engine='lmfit')
+
+        self.assertEqual(result['method'], 'least_squares')
+        self.assertGreaterEqual(result['parameters']['radius']['value'], 10.0)
+
+    def test_leastsq_warns_when_leaving_bounds(self):
+        with self.assertWarnsRegex(UserWarning, r'outside their bounds: radius'):
+            result = self.fitter.fit(engine='lmfit', method='leastsq')
+
+        self.assertLess(result['parameters']['radius']['value'], 10.0)
+
 
 class TestLMFitFittingWithPolydispersity(unittest.TestCase):
     """Test scipy/lmfit fitting engine with polydispersity parameters."""

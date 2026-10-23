@@ -1401,7 +1401,8 @@ class IQuana:
             engine: Fitting engine ('bumps' or 'lmfit')
             method: Optimization method (engine-specific)
                    - BUMPS: 'amoeba', 'lm', 'newton', 'de' (default: 'amoeba')
-                   - LMFit: 'leastsq', 'least_squares', 'differential_evolution', etc.
+                   - LMFit: 'least_squares', 'leastsq', 'differential_evolution', etc.
+                     (default: 'least_squares'; 'leastsq' ignores bounds)
             **kwargs: Additional arguments passed to the fitting engine
 
         Returns:
@@ -1446,7 +1447,7 @@ class IQuana:
             return self._fit_bumps(evaluation_data, method or DEFAULT_BUMPS_METHOD, **kwargs)
         if not LMFIT_AVAILABLE:
             raise ValueError("scipy is not installed. Use 'bumps' engine or install scipy.")
-        return self._fit_lmfit(evaluation_data, method or 'leastsq', **kwargs)
+        return self._fit_lmfit(evaluation_data, method or 'least_squares', **kwargs)
 
     def _log_active_resolution(self) -> None:
         """Report the resolution and weighting a fit is about to use.
@@ -1590,7 +1591,7 @@ class IQuana:
         )
         return self._finalize_fit(engine_output)
 
-    def _fit_lmfit(self, data: Any, method: str = 'leastsq', **kwargs: Any) -> dict[str, Any]:
+    def _fit_lmfit(self, data: Any, method: str = 'least_squares', **kwargs: Any) -> dict[str, Any]:
         """Fit *data* (the evaluation copy) using the scipy.optimize engine."""
         engine_output = fit_scipy(
             data=data,
