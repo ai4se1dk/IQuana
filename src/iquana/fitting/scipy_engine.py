@@ -41,7 +41,7 @@ def fit_scipy(
     data: Any,
     kernel: Any,
     fit_state: ParameterStateSnapshot,
-    method: str = 'leastsq',
+    method: str = 'least_squares',
     weighting_note: str = 'dI',
     **kwargs: Any,
 ) -> EngineFitOutput:
@@ -148,6 +148,19 @@ def fit_scipy(
         # ier 1-4 are leastsq's success codes; 0 and 5+ are failures.
         converged = result[4] in (1, 2, 3, 4)
         message = normalize_message(result[3])
+        # leastsq is unconstrained, so it can land outside the user's limits.
+        outside = (fitted_params < bounds_lower) | (fitted_params > bounds_upper)
+        if outside.any():
+            hits = ', '.join(
+                f'{name} = {value:.6g}'
+                for name, value, out in zip(param_names, fitted_params, outside, strict=True)
+                if out
+            )
+            warnings.warn(
+                f"Fitted parameter(s) outside their bounds: {hits}. 'leastsq' does "
+                "not enforce bounds; use method='least_squares' to respect them.",
+                stacklevel=2,
+            )
     elif method == 'least_squares':
         # diff_step is the relative step itself, not its square.
         kwargs.setdefault('diff_step', JACOBIAN_STEP)
