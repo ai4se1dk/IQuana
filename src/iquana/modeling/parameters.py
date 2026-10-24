@@ -13,9 +13,15 @@ from typing import Any
 
 import numpy as np
 
-from ..console import ARROW, NO, YES
+from ..console import ARROW, NO, YES, logger
 from ..results import ParameterStateSnapshot
-from .polydispersity import PD_DISTRIBUTION_TYPES, PolydispersityManager
+from .polydispersity import (
+    PD_DISTRIBUTION_TYPES,
+    ArrayDistribution,
+    PdParameterInfo,
+    PolydispersityManager,
+    clip_to_limits,
+)
 from .structure_factor import StructureFactorManager, default_parameter_bounds
 
 
@@ -124,14 +130,26 @@ def _normalized_param(info: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalized_pd(info: dict[str, Any]) -> dict[str, Any]:
-    """One polydispersity block with its numbers in canonical types."""
-    return {
+    """One polydispersity block with its numbers in canonical types.
+
+    ``pd_array`` is written only for an array block. An analytic block carries
+    no ``pd_array`` key at all, so its exported shape differs from the pre-#90
+    shape only by the two explicitness flags, which the configuration digest
+    projects away (``persistence.digest_view``).
+    """
+    block = {
         'pd': float(info['pd']),
         'pd_n': int(info['pd_n']),
         'pd_nsigma': float(info['pd_nsigma']),
         'pd_type': str(info['pd_type']),
         'vary': bool(info['vary']),
+        'pd_n_explicit': bool(info.get('pd_n_explicit', True)),
+        'pd_nsigma_explicit': bool(info.get('pd_nsigma_explicit', True)),
     }
+    payload = info.get('pd_array')
+    if payload is not None:
+        block['pd_array'] = payload.to_payload()
+    return block
 
 
 def _validated_param(name: str, saved: Any) -> dict[str, Any]:
@@ -184,12 +202,44 @@ def _validated_pd(name: str, saved: Any) -> dict[str, Any]:
         )
     if not isinstance(saved['vary'], bool):
         raise ValueError(f"Polydispersity for '{name}': 'vary' must be true or false.")
+
+    # Absent flags mean a file written before #90. Its numbers were chosen by
+    # whoever wrote it and must be reproduced exactly, so they read as explicit:
+    # a later type switch will not replace them with defaults.
+    flags = {}
+    for flag in ('pd_n_explicit', 'pd_nsigma_explicit'):
+        value = saved.get(flag, True)
+        if not isinstance(value, bool):
+            raise ValueError(f"Polydispersity for '{name}': '{flag}' must be true or false.")
+        flags[flag] = value
+
+    payload = saved.get('pd_array')
+    if saved['pd_type'] == 'array':
+        if payload is None:
+            raise ValueError(
+                f"Polydispersity for '{name}': pd_type is 'array' but no pd_array is stored."
+            )
+        if saved['vary']:
+            raise ValueError(
+                f"Polydispersity for '{name}': an array distribution has no width to fit, "
+                "so 'vary' must be false."
+            )
+        distribution = ArrayDistribution.from_saved(payload, name)
+    else:
+        if payload is not None:
+            raise ValueError(
+                f"Polydispersity for '{name}': pd_array is only valid with pd_type "
+                f"'array', not {saved['pd_type']!r}."
+            )
+        distribution = None
     return {
         'pd': width,
         'pd_n': int(saved['pd_n']),
         'pd_nsigma': nsigma,
         'pd_type': saved['pd_type'],
         'vary': saved['vary'],
+        **flags,
+        'pd_array': distribution,
     }
 
 
@@ -238,6 +288,16 @@ def _validated_links(links: Any, params: dict[str, dict[str, Any]]) -> dict[str,
                 f"which itself follows '{resolved[target]}'. Link both to the common target."
             )
     return resolved
+
+
+def _pd_parameter_info(param: Any) -> PdParameterInfo:
+    """Hard limits and kind of one sasmodels parameter, tolerating mock kernels."""
+    try:
+        low, high = (float(bound) for bound in param.limits)
+        limits: tuple[float, float] | None = (low, high)
+    except (TypeError, ValueError):
+        limits = None
+    return PdParameterInfo(limits=limits, orientation=getattr(param, 'type', '') == 'orientation')
 
 
 class ParameterManager:
@@ -365,6 +425,7 @@ class ParameterManager:
         self._components = [tuple(entry) for entry in components]
 
         # Extract parameters from kernel
+        pd_info: dict[str, PdParameterInfo] = {}
         for param in kernel.info.parameters.kernel_parameters:
             lo, hi = default_parameter_bounds(param.default, param.limits)
             self.params[param.name] = {
@@ -378,6 +439,7 @@ class ParameterManager:
             # Track polydisperse parameters
             if getattr(param, 'polydisperse', False):
                 self._polydisperse_param_names.append(param.name)
+                pd_info[param.name] = _pd_parameter_info(param)
 
         # Add implicit scale and background parameters (present in all models)
         if 'scale' not in self.params:
@@ -398,7 +460,7 @@ class ParameterManager:
                 'description': 'Constant background level',
             }
 
-        self._initialize_polydispersity_params()
+        self._initialize_polydispersity_params(pd_info)
 
     def get_param_dict(self) -> dict[str, dict[str, Any]]:
         """
@@ -483,6 +545,17 @@ class ParameterManager:
             for name, info in canonical_params.items()
             if info['vary'] and name not in linked_params
         ]
+
+        # Fit preflight for the array policy. Every write path enforces it, so
+        # reaching this means something wrote around those checks.
+        arrays = set(self._pd_manager.array_parameters())
+        clash = arrays & (set(varying) | set(linked_params) | set(linked_params.values()))
+        if clash:
+            raise ValueError(
+                f'{", ".join(sorted(clash))} has an array distribution but is fitted or '
+                'linked. An array-distributed parameter is a fixed constant; set '
+                'vary=False and remove its links.'
+            )
 
         return ParameterStateSnapshot(
             params=canonical_params,
@@ -609,6 +682,13 @@ class ParameterManager:
                 raise KeyError(f"Parameter '{original}' not found. Available: {available}")
         if follower == target:
             raise ValueError(f"Cannot link parameter '{name}' to itself.")
+        for resolved, original in ((follower, name), (target, to)):
+            if self.is_array_parameter(resolved):
+                raise ValueError(
+                    f"Cannot link '{name}' to '{to}': '{original}' has an array "
+                    'distribution, which makes it a fixed constant outside any link. '
+                    'Switch its pd_type first.'
+                )
         if follower in self._links:
             raise ValueError(f"Parameter '{name}' is already linked to '{self._links[follower]}'.")
         if target in self._links:
@@ -756,6 +836,12 @@ class ParameterManager:
                     f'components (found in {len(canonicals)}). '
                     f'Per-component parameters — {per_component}'
                 )
+            arrays = [c for c in canonicals if self._pd_manager.is_array(c)]
+            if arrays:
+                raise ValueError(
+                    f"Shared parameter '{shared_name}' cannot include {', '.join(arrays)}, "
+                    'which has an array distribution.'
+                )
             shared_to_canonicals[shared_name] = canonicals
             # The shared canonical names reverse-map to the shared alias.
             for canonical in canonicals:
@@ -793,6 +879,71 @@ class ParameterManager:
     def _resolve_canonical(self, name: str) -> str:
         """Map an alias (or canonical) name to its canonical sasmodels name."""
         return self._alias_to_canonical.get(name, name)
+
+    # =========================================================================
+    # Array-distribution policy (90-DESIGN.md §6.3)
+    #
+    # A parameter with an 'array' distribution is a fixed constant with no
+    # dependencies: not fitted, not a link follower or target, not shared. With
+    # polydispersity enabled the kernel integrates over the array's absolute
+    # points and never reads the nominal value, so fitting it is meaningless,
+    # and forbidding dependencies is what keeps "changing it changes nothing"
+    # true without exception. The rule holds while polydispersity is disabled
+    # too, so toggling the switch never changes what is fittable.
+    # =========================================================================
+
+    def _canonicals_of(self, resolved: str) -> list[str]:
+        """Every canonical slot a resolved user-facing name drives (shared names expand)."""
+        return list(self._shared_to_canonicals.get(resolved) or [self._resolve_canonical(resolved)])
+
+    def is_array_parameter(self, name: str) -> bool:
+        """Whether any canonical slot behind *name* carries an array distribution."""
+        try:
+            resolved = self.resolve_name(name)
+        except KeyError:
+            resolved = name
+        return any(self._pd_manager.is_array(c) for c in self._canonicals_of(resolved))
+
+    def _array_dependency(
+        self,
+        canonical: str,
+        links: dict[str, str] | None = None,
+        shared: dict[str, list[str]] | None = None,
+    ) -> str | None:
+        """Why *canonical* cannot carry an array distribution, or None if it can."""
+        links = self._links if links is None else links
+        shared = self._shared_to_canonicals if shared is None else shared
+        user = self._canonical_to_alias.get(canonical, canonical)
+        if user in shared:
+            return f"it is shared between components as '{user}' (set_models(shared=...))"
+        if user in links:
+            return f"'{user}' follows '{links[user]}' through a link"
+        followers = sorted(follower for follower, target in links.items() if target == user)
+        if followers:
+            hint = (
+                " (radius_effective_mode='link_radius' creates this link)"
+                if 'radius_effective' in followers
+                else ''
+            )
+            listed = ', '.join(repr(follower) for follower in followers)
+            return f"{listed} follow(s) '{user}' through a link{hint}"
+        return None
+
+    def require_link_radius_allowed(self, radius_effective_mode: str) -> None:
+        """Refuse ``link_radius`` while ``radius`` carries an array distribution."""
+        if radius_effective_mode == 'link_radius' and self.is_array_parameter('radius'):
+            raise ValueError(
+                "radius_effective_mode='link_radius' links radius_effective to radius, "
+                'but radius has an array distribution, which takes part in no link. '
+                "Use radius_effective_mode='unconstrained', or change the pd_type of radius."
+            )
+
+    def _require_fittable(self, name: str, resolved: str) -> None:
+        if any(self._pd_manager.is_array(c) for c in self._canonicals_of(resolved)):
+            raise ValueError(
+                f"Parameter '{name}' has an array distribution; its value does not enter "
+                'the model, so it cannot be fitted. Switch pd_type first.'
+            )
 
     def to_display_name(self, canonical_name: str) -> str:
         """Translate a canonical sasmodels name to its user-facing name.
@@ -845,6 +996,8 @@ class ParameterManager:
                     f"Parameter '{name}' is linked to '{target}' and cannot be "
                     'set directly. Configure the target, or unlink_params() first.'
                 )
+        if vary:
+            self._require_fittable(name, resolved)
 
         if value is not None:
             self.params[resolved]['value'] = value
@@ -905,6 +1058,8 @@ class ParameterManager:
                 vary_str = f'{ARROW}radius'
             if name in self._links:
                 vary_str = f'{ARROW}{self._links[name]}'
+            if self.is_array_parameter(name):
+                vary_str = 'array PD'
             return (
                 f'{name:<28} {info["value"]:<12.4g} {info["min"]:<12.4g} '
                 f'{info["max"]:<12.4g} {vary_str:<8}'
@@ -961,6 +1116,8 @@ class ParameterManager:
                 vary_str = f'{ARROW}radius'
             if name in self._links:
                 vary_str = f'{ARROW}{self._links[name]}'
+            if self.is_array_parameter(name):
+                vary_str = 'array PD'
             print(
                 f'{name:<20} {info["value"]:<12.4g} {info["min"]:<12.4g} '
                 f'{info["max"]:<12.4g} {vary_str:<8}'
@@ -1009,6 +1166,7 @@ class ParameterManager:
         Raises:
             ValueError: If radius_effective_mode is invalid
         """
+        self.require_link_radius_allowed(radius_effective_mode)
         # Backup polydispersity state if not already done
         if not self._backed_up_pd_state:
             self.backup_pd_state()
@@ -1121,9 +1279,11 @@ class ParameterManager:
     # Polydispersity Methods
     # =========================================================================
 
-    def _initialize_polydispersity_params(self) -> None:
+    def _initialize_polydispersity_params(
+        self, info: dict[str, PdParameterInfo] | None = None
+    ) -> None:
         """Initialize polydispersity parameters for all polydisperse parameters."""
-        self._pd_manager.initialize(self._polydisperse_param_names)
+        self._pd_manager.initialize(self._polydisperse_param_names, info)
 
     def get_polydisperse_parameters(self) -> list[str]:
         """
@@ -1151,6 +1311,7 @@ class ParameterManager:
         pd_nsigma: float | None = None,
         pd_type: str | None = None,
         vary: bool | None = None,
+        pd_array: Any = None,
     ) -> None:
         """
         Configure polydispersity for a specific parameter.
@@ -1158,18 +1319,35 @@ class ParameterManager:
         Args:
             base_param: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
-            pd_n: Number of Gaussian quadrature points (default: 35)
-            pd_nsigma: Number of sigmas to include (default: 3.0)
-            pd_type: Distribution type ('gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann')
+            pd_n: Number of quadrature points (default depends on pd_type)
+            pd_nsigma: Number of sigmas to include (default depends on pd_type)
+            pd_type: Distribution type, one of ``PD_DISTRIBUTION_TYPES``
             vary: Whether to vary the pd_width during fitting
+            pd_array: For ``pd_type='array'``: a two-column file path, a
+                ``(values, weights)`` pair, or an (N, 2) array
 
         Raises:
             KeyError: If base_param is not a polydisperse parameter
-            ValueError: If pd_type is not a valid distribution type
+            ValueError: If a setting is invalid, or an array distribution is
+                requested for a parameter that is linked or shared
         """
         # Polydispersity state is keyed by canonical names end-to-end; resolve
         # aliases (e.g. 'small_radius' -> 'A_radius') before delegating.
+        display_name = base_param
         base_param = self._resolve_canonical(base_param)
+        entering_array = (
+            pd_type == 'array'
+            and base_param in self._pd_manager.get_parameters()
+            and not self._pd_manager.is_array(base_param)
+        )
+        if entering_array:
+            dependency = self._array_dependency(base_param)
+            if dependency is not None:
+                raise ValueError(
+                    f"Cannot give '{display_name}' an array distribution: {dependency}. "
+                    'An array-distributed parameter is a fixed constant outside any link '
+                    'or sharing; remove the dependency first.'
+                )
         self._pd_manager.set_param(
             base_param,
             pd_width=pd_width,
@@ -1177,7 +1355,16 @@ class ParameterManager:
             pd_nsigma=pd_nsigma,
             pd_type=pd_type,
             vary=vary,
+            pd_array=pd_array,
         )
+        if self._pd_manager.is_array(base_param):
+            user = self._canonical_to_alias.get(base_param, base_param)
+            if user in self.params and self.params[user]['vary']:
+                self.params[user]['vary'] = False
+                logger.info(
+                    f'{user}: no longer fitted; with an array distribution its value '
+                    'does not enter the model.'
+                )
 
     def get_pd_param(self, base_param: str) -> dict[str, Any]:
         """
@@ -1188,7 +1375,8 @@ class ParameterManager:
 
         Returns:
             Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, and active values.
-            'active' indicates whether polydispersity is active for this parameter (pd > 0).
+            'active' indicates whether the distribution takes part in evaluation:
+            always for an array, otherwise pd > 0 or a varying width.
 
         Raises:
             KeyError: If base_param is not a polydisperse parameter
@@ -1397,6 +1585,11 @@ class ParameterManager:
         sf_cfg = _require_mapping(config, 'structure_factor', default={})
         backup_cfg = _require_mapping(sf_cfg, 'form_factor_backup', default={})
         new_backup = {name: _validated_param(name, saved) for name, saved in backup_cfg.items()}
+        # Validated before anything is committed, like every other section: a bad
+        # payload inside the backup must not leave the manager half-assigned.
+        new_pd_backup = _validated_pd_backup(pd_cfg.get('backup'))
+
+        self._check_saved_arrays(new_pd, new_params, new_links)
 
         # Followers always carry their target's value, whatever the file says.
         for follower, target in new_links.items():
@@ -1408,8 +1601,34 @@ class ParameterManager:
         self._links = new_links
         self._pd_manager.params = new_pd
         self._pd_manager.set_enabled(bool(pd_cfg.get('enabled', False)))
-        self._pd_manager.backup_state = _validated_pd_backup(pd_cfg.get('backup'))
+        self._pd_manager.backup_state = new_pd_backup
         self._sf_manager.backed_up_params = new_backup
+
+    def _check_saved_arrays(
+        self,
+        pd_blocks: dict[str, dict[str, Any]],
+        params: dict[str, dict[str, Any]],
+        links: dict[str, str],
+    ) -> None:
+        """Apply the array policy and the support check to a configuration being loaded."""
+        for canonical, block in pd_blocks.items():
+            if block.get('pd_type') != 'array':
+                continue
+            dependency = self._array_dependency(canonical, links=links)
+            if dependency is not None:
+                raise ValueError(
+                    f"Polydispersity for '{canonical}': an array distribution cannot "
+                    f'take part in a link or sharing, but {dependency}.'
+                )
+            user = self._canonical_to_alias.get(canonical, canonical)
+            if params.get(user, {}).get('vary'):
+                raise ValueError(
+                    f"Parameter '{user}' is saved with vary=true, but it has an array "
+                    'distribution, whose value does not enter the model.'
+                )
+            limits = self._pd_manager.limits(canonical)
+            if limits is not None:
+                clip_to_limits(block['pd_array'], limits, canonical)
 
     def clear(self) -> None:
         """Clear all parameters and reset state."""

@@ -1,9 +1,10 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
 
+from ..modeling.polydispersity import pd_contributes
 from ..results import FitResultContract, ParameterStateSnapshot
 
 #: Absolute floor for the on-bound proximity test. Also what makes a parameter fitted to
@@ -17,7 +18,26 @@ BOUND_RTOL = 1e-4
 
 def pd_is_active(pd_config: dict[str, Any]) -> bool:
     """Return whether a PD configuration should be included in model evaluation."""
-    return pd_config['pd'] > 0 or pd_config.get('vary', False)
+    return pd_contributes(pd_config)
+
+
+def pd_block(base: str, pd_config: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``<base>_pd``, ``_pd_n``, ``_pd_nsigma``, ``_pd_type`` keywords sasmodels expects.
+
+    The single writer of the polydispersity keyword block. Empty for an
+    ``array`` block: sasmodels cannot take an array distribution as keywords
+    (``weights.get_weights`` refuses it), so its parameter is left monodisperse
+    in the keyword dict and :mod:`iquana.fitting.dispersion` replaces that
+    entry of the integration mesh instead.
+    """
+    if pd_config.get('pd_type') == 'array':
+        return {}
+    return {
+        f'{base}_pd': pd_config['pd'],
+        f'{base}_pd_n': pd_config['pd_n'],
+        f'{base}_pd_nsigma': pd_config['pd_nsigma'],
+        f'{base}_pd_type': pd_config['pd_type'],
+    }
 
 
 def normalize_message(text: Any) -> str:

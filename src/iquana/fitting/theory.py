@@ -7,11 +7,11 @@ from typing import Any
 
 import numpy as np
 from sasmodels.data import empty_data1D
-from sasmodels.direct_model import DirectModel
 
 from ..data.loader import has_real_data, validate_q_grid
 from ..results import ParameterStateSnapshot, resolve_fit_index
-from .base import apply_parameter_links, extract_fit_index, pd_is_active, reduced_chisq
+from .base import apply_parameter_links, extract_fit_index, pd_block, pd_is_active, reduced_chisq
+from .dispersion import EffectiveDispersion, IQuanaDirectModel
 
 
 @dataclass(slots=True, frozen=True)
@@ -39,6 +39,14 @@ def build_model_parameters(
     follower through its target. A ``<base>_pd`` override brings the block's
     companion settings along, because sasmodels ignores a width that arrives
     without ``_pd_n``.
+
+    A ``<base>_pd`` override of an ``array`` distribution is refused: an array
+    has no width, and an override that changed nothing would mislead. IQuana
+    never generates one itself, because an array width is not a graph quantity
+    (90-DESIGN.md §4.5).
+
+    Raises:
+        ValueError: For a width override of an array-distributed parameter.
     """
     pars: dict[str, Any] = {name: info['value'] for name, info in fit_state.params.items()}
 
@@ -46,20 +54,25 @@ def build_model_parameters(
         for base_param in fit_state.polydisperse_param_names:
             pd_config = fit_state.polydisperse_params[base_param]
             if pd_is_active(pd_config):
-                pars[f'{base_param}_pd'] = pd_config['pd']
-                pars[f'{base_param}_pd_n'] = pd_config['pd_n']
-                pars[f'{base_param}_pd_nsigma'] = pd_config['pd_nsigma']
-                pars[f'{base_param}_pd_type'] = pd_config['pd_type']
+                pars.update(pd_block(base_param, pd_config))
 
     if overrides:
+        for name in overrides:
+            base = name.removesuffix('_pd')
+            if name.endswith('_pd') and (
+                fit_state.polydisperse_params.get(base, {}).get('pd_type') == 'array'
+            ):
+                raise ValueError(
+                    f"'{name}' cannot be overridden: '{base}' has an array distribution, "
+                    'which has no width.'
+                )
         pars.update(overrides)
         for name in overrides:
             base = name.removesuffix('_pd')
             if name.endswith('_pd') and f'{base}_pd_n' not in pars:
-                pd_config = fit_state.polydisperse_params[base]
-                pars[f'{base}_pd_n'] = pd_config['pd_n']
-                pars[f'{base}_pd_nsigma'] = pd_config['pd_nsigma']
-                pars[f'{base}_pd_type'] = pd_config['pd_type']
+                block = pd_block(base, fit_state.polydisperse_params[base])
+                block.pop(f'{base}_pd')
+                pars.update(block)
 
     apply_parameter_links(pars, fit_state.linked_params)
     return pars
@@ -73,11 +86,18 @@ def theory_data(q: Any, dq: float | None = None) -> Any:
     return empty_data1D(q_values, resolution=0.0 if dq is None else float(dq))
 
 
-def evaluate_theory(data: Any, kernel: Any, pars: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+def evaluate_theory(
+    data: Any,
+    kernel: Any,
+    pars: dict[str, Any],
+    arrays: Mapping[str, EffectiveDispersion] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate *kernel* over the fitted points of *data*.
 
     Returns the float64 curve and the boolean fit index. The dataset's own
-    resolution columns are applied, exactly as during a fit.
+    resolution columns are applied, exactly as during a fit. *arrays* carries
+    the resolved ``array`` distributions (``fitting.dispersion``), which
+    sasmodels cannot take as keywords.
     """
     if data.y is not None and data.dy is None:
         # DirectModel indexes dy whenever y is present. Evaluate on a shallow
@@ -85,7 +105,7 @@ def evaluate_theory(data: Any, kernel: Any, pars: dict[str, Any]) -> tuple[np.nd
         data = copy.copy(data)
         data.dy = np.zeros_like(np.asarray(data.y, dtype=float))
 
-    calculator = DirectModel(data, kernel)
+    calculator = IQuanaDirectModel(data, kernel, arrays=arrays)
     curve = np.asarray(calculator(**pars), dtype=float)
     return curve, resolve_fit_index(extract_fit_index(calculator), len(data.x))
 

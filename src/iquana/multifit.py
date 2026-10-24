@@ -61,8 +61,9 @@ from .data.provenance import fingerprint_arrays
 from .data.resolution import ResolutionSetting
 from .fileio import atomic_write
 from .fitter import IQuana
-from .fitting.base import at_bound, reduced_chisq
+from .fitting.base import at_bound, pd_is_active, reduced_chisq
 from .fitting.bumps_engine import DEFAULT_BUMPS_METHOD
+from .fitting.dispersion import fit_state_arrays
 from .fitting.multi_bumps import MultiEntrySpec, run_multi_bumps
 from .fitting.theory import build_model_parameters, evaluate_theory, theory_data
 from .modeling.constraints import (
@@ -248,13 +249,19 @@ class DatasetHandle:
         pd_nsigma: float | None = None,
         pd_type: str | None = None,
         vary: bool | None = None,
+        pd_array: Any = None,
     ) -> None:
         """Configure polydispersity for a parameter of this dataset.
 
         One call is one transaction. The width and vary flag belong to the
         quantity and reach every dataset sharing it; the distribution type,
-        quadrature count and truncation are this dataset's own configuration.
-        If any part of the call is rejected, none of it is applied.
+        quadrature count, truncation and an ``array`` distribution's
+        ``pd_array`` are this dataset's own configuration. If any part of the
+        call is rejected, none of it is applied.
+
+        An ``array`` distribution makes the parameter a fixed constant outside
+        every relationship: switching a shared, linked or constrained parameter
+        (or its width) to ``array`` is refused. See :meth:`IQuana.set_pd_param`.
         """
         self._parent._configure_pd(
             self._name,
@@ -264,6 +271,7 @@ class DatasetHandle:
             pd_nsigma=pd_nsigma,
             pd_type=pd_type,
             vary=vary,
+            pd_array=pd_array,
         )
 
     def enable_polydispersity(self, enabled: bool = True) -> None:
@@ -320,8 +328,45 @@ class DatasetHandle:
         )
         if resolved is not None:
             config['pd'] = resolved
-            config['active'] = resolved > 0
+            config['active'] = pd_is_active(config)
         return config
+
+    def _graph_dispersion(self, param_name: str) -> tuple[Any, dict[str, Any], Any]:
+        """This dataset's effective distribution at the graph-resolved center and width."""
+        self._fitter.get_pd_param(param_name)  # KeyError naming the valid parameters
+        parent = self._parent
+        manager = self._fitter._param_manager
+        resolved = parent._resolved_values()
+        centers = parent._canonical_values(parent._entry(self._name), resolved)
+        width = resolved.get(ParameterRef(self._name, manager.resolve_name(param_name), pd=True))
+        return self._fitter._effective_dispersion(
+            param_name,
+            center=centers.get(manager._resolve_canonical(param_name)),
+            width=width,
+        )
+
+    def get_pd_weights(self, param_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """The distribution the joint fit integrates over for one parameter.
+
+        As :meth:`IQuana.get_pd_weights`, but at the parameter value and width
+        the constraint graph resolves: a radius constrained to another
+        dataset's, or a width shared with one, is shown as it will be fitted.
+        """
+        effective, _config, _parameter = self._graph_dispersion(param_name)
+        return np.array(effective.values, copy=True), np.array(effective.weights, copy=True)
+
+    def plot_distribution(self, param_name: str, show: bool | None = None) -> Figure:
+        """Plot :meth:`get_pd_weights`. Same display convention as plot_results()."""
+        from . import plotting
+
+        effective, config, parameter = self._graph_dispersion(param_name)
+        return plotting.plot_pd_weights(
+            effective,
+            name=f'{self._name}.{param_name}',
+            units=getattr(parameter, 'units', ''),
+            pd_config=config,
+            show=show,
+        )
 
     def get_pd_params(self) -> None:
         """Print this dataset's polydispersity table."""
@@ -1527,6 +1572,10 @@ class MultiFitter:
                 vary=changes.get('vary'),
             )
             return
+        if changes.get('vary'):
+            # This path writes around ParameterManager.set_param, so it applies
+            # the array policy itself.
+            fitter._param_manager._require_fittable(ref.qualified, ref.name)
         info = fitter.params[ref.name]
         for field in ('value', 'min', 'max', 'vary'):
             if changes.get(field) is not None:
@@ -1629,8 +1678,12 @@ class MultiFitter:
                     continue
                 ref = ParameterRef(entry.name, key, pd=True)
                 config = manager.get_pd_param(canonical)
-                active = config['pd'] > 0 or config.get('vary', False)
-                if not (active or ref in declared):
+                if config['pd_type'] == 'array':
+                    # Contributes to evaluation, but has no width: not a graph
+                    # quantity, so it never reaches overrides, forced_pd or a
+                    # bumps range (90-DESIGN.md §4.5).
+                    continue
+                if not (pd_is_active(config) or ref in declared):
                     continue
                 low, high = PD_WIDTH_RANGE
                 descriptors[ref] = ParameterDescriptor(
@@ -1659,8 +1712,42 @@ class MultiFitter:
                 links[ParameterRef(entry.name, follower)] = ParameterRef(entry.name, target)
         return links
 
+    def _array_references(self) -> set[ParameterRef]:
+        """Every reference that names an array-distributed parameter or its width."""
+        refs: set[ParameterRef] = set()
+        for entry in self._entries.values():
+            manager = entry.fitter._param_manager
+            for name in manager.params:
+                if manager.is_array_parameter(name):
+                    refs.add(ParameterRef(entry.name, name))
+                    refs.add(ParameterRef(entry.name, name, pd=True))
+            for canonical in manager.get_polydisperse_parameters():
+                if manager._pd_manager.is_array(canonical):
+                    display = manager.to_display_name(canonical)
+                    refs.add(ParameterRef(entry.name, display, pd=True))
+        return refs
+
+    def _refuse_array_relationships(self) -> None:
+        """An array-distributed parameter is a fixed constant outside every relationship."""
+        involved = sorted(
+            self._declared_references() & self._array_references(), key=lambda ref: ref.qualified
+        )
+        if not involved:
+            return
+        ref = involved[0]
+        if ref.pd:
+            raise ConstraintError(
+                f'{ref.qualified} belongs to an array distribution, which has no width, '
+                'so it cannot be shared, linked or constrained.'
+            )
+        raise ConstraintError(
+            f'{ref.qualified} has an array distribution, which makes it a fixed constant: '
+            'its value cannot be shared, linked or constrained. Change its pd_type first.'
+        )
+
     def _compiled(self) -> CompiledGraph:
         if self._graph is None:
+            self._refuse_array_relationships()
             descriptors = self._descriptors()
             self._check_references(descriptors)
             self._graph = compile_graph(
@@ -1848,7 +1935,8 @@ class MultiFitter:
     ) -> tuple[np.ndarray, np.ndarray]:
         fit_state = entry.fitter._param_manager.snapshot_fit_state()
         pars = build_model_parameters(fit_state, self._overrides(entry, resolved))
-        return evaluate_theory(target, entry.fitter.kernel, pars)
+        arrays = fit_state_arrays(fit_state, entry.fitter.kernel.info)
+        return evaluate_theory(target, entry.fitter.kernel, pars, arrays)
 
     def _entry_spec(self, entry: _Entry) -> MultiEntrySpec:
         manager = entry.fitter._param_manager

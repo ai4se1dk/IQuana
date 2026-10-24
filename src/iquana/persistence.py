@@ -17,7 +17,8 @@ instruction. Only built-in model names are accepted unless the caller opts in.
 
 **No bulk arrays.** Data curves and posterior chains stay out. A covariance
 matrix does not: it is ``n_free`` by ``n_free``, and it is the most useful part
-of a result to keep.
+of a result to keep. An empirical (``array``) size distribution is configuration,
+not data, and is stored inline: a file path alone would not reproduce the fit.
 """
 
 import hashlib
@@ -43,8 +44,12 @@ SCHEMA_FORMAT = 'iquana-analysis'
 # Version 2 (#72 item 3) fills the 'weighting' key that version 1 reserved,
 # and records the weighting in each fit context. Version 1 documents read as
 # 'dI', the only weighting that existed when they were written.
-SCHEMA_VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+# Version 3 (#90) adds the 'uniform' and 'array' distribution types, the
+# pd_n_explicit / pd_nsigma_explicit flags, and the inline pd_array payload of
+# each polydispersity block. Older documents read with both flags true (their
+# numbers are reproduced exactly) and no array.
+SCHEMA_VERSION = 3
+SUPPORTED_VERSIONS = (1, 2, 3)
 
 #: The weighting every pre-weighting (0.4, schema 1) fit was made under.
 DEFAULT_WEIGHTING = {'mode': 'dI'}
@@ -128,9 +133,64 @@ def decode_numbers(value: Any) -> Any:
     return value
 
 
+#: Fields schema 3 added to a polydispersity block that carry no engine-visible
+#: information. ``digest_view`` removes them, so a configuration that predates
+#: them hashes exactly as it did when its result was saved.
+_PD_BOOKKEEPING_FIELDS = ('pd_n_explicit', 'pd_nsigma_explicit')
+
+
+def _digest_pd_block(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return block
+    projected = {key: value for key, value in block.items() if key not in _PD_BOOKKEEPING_FIELDS}
+    if projected.get('pd_type') != 'array':
+        # Absent, not null: JSON tells the two apart, and a pre-#90 block had
+        # no such key at all.
+        projected.pop('pd_array', None)
+    elif isinstance(projected.get('pd_array'), dict):
+        projected['pd_array'] = {
+            key: value for key, value in projected['pd_array'].items() if key != 'source'
+        }
+    return projected
+
+
+def digest_view(config: Any) -> Any:
+    """The configuration as the digest sees it. Never mutates *config*.
+
+    Exactly the schema-3 additions that do not change what is evaluated are
+    projected away: the two explicitness flags of every polydispersity block,
+    an analytic block's ``pd_array`` key, and an array's ``source`` path. The
+    array's values and weights stay in. The projection covers the live blocks
+    and those of the pre-structure-factor backup.
+
+    This is deliberately not a general "hash what the engine sees" view:
+    bounds, vary flags and links have always been in the digest, and removing
+    any field that old files hashed would detach their results.
+    """
+    if not isinstance(config, dict) or not isinstance(config.get('polydispersity'), dict):
+        return config
+    pd_section = dict(config['polydispersity'])
+    if isinstance(pd_section.get('params'), dict):
+        pd_section['params'] = {
+            name: _digest_pd_block(block) for name, block in pd_section['params'].items()
+        }
+    backup = pd_section.get('backup')
+    if isinstance(backup, dict) and isinstance(backup.get('polydisperse_params'), dict):
+        pd_section['backup'] = {
+            **backup,
+            'polydisperse_params': {
+                name: _digest_pd_block(block)
+                for name, block in backup['polydisperse_params'].items()
+            },
+        }
+    return {**config, 'polydispersity': pd_section}
+
+
 def config_digest(config: dict[str, Any]) -> str:
     """A stable hash of a manager configuration, for staleness comparison."""
-    canonical = json.dumps(encode_numbers(config), sort_keys=True, separators=(',', ':'))
+    canonical = json.dumps(
+        encode_numbers(digest_view(config)), sort_keys=True, separators=(',', ':')
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 

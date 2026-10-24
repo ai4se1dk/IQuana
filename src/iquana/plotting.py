@@ -1,3 +1,4 @@
+import os
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -597,6 +598,107 @@ def plot_param_distribution(
         template='plotly_white',
         height=500,
         width=700,
+        showlegend=False,
+    )
+
+    if resolve_show(show):
+        fig.show()
+    return fig
+
+
+#: sasmodels unit strings, spelled for an axis title.
+_UNIT_LABELS = {'Ang': 'Å', '1/Ang': 'Å⁻¹', '1/Ang^2': 'Å⁻²', 'degrees': '°'}
+PD_WEIGHTS_TRACE_NAME = 'Quadrature points'
+PD_CENTER_LINE_COLOR = 'rgb(80, 80, 80)'
+
+
+def _pd_title(name: str, effective: Any, pd_config: dict[str, Any]) -> str:
+    """Describe the distribution configured for *name*, and what disables it."""
+    pd_type = pd_config['pd_type']
+    if pd_type == 'array':
+        payload = pd_config['pd_array']
+        source = getattr(payload, 'source', None)
+        title = f'{name} — array, {len(payload)} points'
+        if source:
+            title += f' ({os.path.basename(source)})'
+        if effective.n_dropped and effective.limits is not None:
+            low, high = effective.limits
+            title += f', {effective.n_dropped} dropped outside [{low:g}, {high:g}]'
+    else:
+        parts = [pd_type, f'pd = {pd_config["pd"]:g}', f'n = {pd_config["pd_n"]}']
+        if pd_type != 'uniform':
+            parts.append(f'nσ = {pd_config["pd_nsigma"]:g}')
+        title = f'{name} — {", ".join(parts)}'
+    if not effective.enabled:
+        title += ' — polydispersity disabled'
+    return title
+
+
+def _single_point_note(effective: Any) -> str | None:
+    """Why the plot shows one point, in words; None when it shows a distribution."""
+    if len(effective.values) != 1:
+        return None
+    if effective.kind == 'array':
+        return 'array: 1 point'
+    if effective.reason == 'polydispersity disabled':
+        return 'polydispersity disabled: the fit uses the single value'
+    return f'monodisperse ({effective.reason})'
+
+
+def plot_pd_weights(
+    effective: Any,
+    *,
+    name: str,
+    units: str = '',
+    pd_config: dict[str, Any],
+    show: bool | None = None,
+) -> go.Figure:
+    """Plot one parameter's effective polydispersity distribution.
+
+    *effective* is a :class:`~iquana.fitting.dispersion.EffectiveDispersion`:
+    the points and weights the kernel sums over, already clipped and
+    normalised. One marker per point; the connecting line only guides the eye.
+    On a nonuniform grid the weights are masses, not a density.
+    """
+    unit = _UNIT_LABELS.get(units, units)
+    x_title = f'{name} ({unit})' if unit else name
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=np.asarray(effective.values, dtype=float),
+            y=np.asarray(effective.weights, dtype=float),
+            mode='lines+markers',
+            name=PD_WEIGHTS_TRACE_NAME,
+        )
+    )
+    fig.add_vline(
+        x=float(effective.center),
+        line_color=PD_CENTER_LINE_COLOR,
+        line_dash='dash',
+        line_width=1.5,
+        annotation_text=f'{name} = {effective.center:g}',
+        annotation_position='top right',
+    )
+    note = _single_point_note(effective)
+    if note is not None:
+        fig.add_annotation(
+            text=note,
+            xref='paper',
+            yref='paper',
+            x=0.02,
+            y=0.95,
+            showarrow=False,
+            align='left',
+        )
+
+    fig.update_layout(
+        title=_pd_title(name, effective, pd_config),
+        xaxis_title=x_title,
+        yaxis_title='quadrature weight (sum = 1, before joint cutoff)',
+        template='plotly_white',
+        height=500,
+        width=750,
         showlegend=False,
     )
 

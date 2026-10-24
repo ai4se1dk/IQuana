@@ -58,6 +58,8 @@ The main class for SANS data fitting.
         - enable_polydispersity
         - is_polydispersity_enabled
         - get_pd_params
+        - get_pd_weights
+        - plot_distribution
         - get_varying_pd_params
 
 ### Composite model naming
@@ -142,6 +144,8 @@ result nobody asked for.
         - get_params
         - get_pd_param
         - get_pd_params
+        - get_pd_weights
+        - plot_distribution
         - get_polydisperse_parameters
         - get_varying_pd_params
         - get_q_range
@@ -437,29 +441,45 @@ Internal class for managing structure factor selection and parameter backup/rest
 
 ## Polydispersity Constants
 
-The following constants are available in `iquana.modeling.parameters`:
+The following constants are importable from `iquana` (and defined in
+`iquana.modeling.polydispersity`):
 
 ### PD_DISTRIBUTION_TYPES
 
 ```python
-PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
+PD_DISTRIBUTION_TYPES = [
+    'gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz', 'boltzmann', 'array',
+]
 ```
-
-Supported polydispersity distribution types:
 
 | Type | Description |
 |------|-------------|
-| `gaussian` | Gaussian/normal distribution (default) |
-| `rectangle` | Uniform/rectangular distribution |
-| `lognormal` | Log-normal distribution |
-| `schulz` | Schulz distribution (common for polymers) |
-| `boltzmann` | Boltzmann distribution |
+| `gaussian` | Gaussian distribution (default) |
+| `rectangle` | Flat box with half-width √3 σ, so `pd` is its standard deviation |
+| `uniform` | Flat box with half-width σ, so `pd` is its half-width |
+| `lognormal` | Log-normal; `pd` is the standard deviation of ln x |
+| `schulz` | Schulz–Zimm distribution (common for polymers) |
+| `boltzmann` | Two-sided exponential; `pd` is the decay length |
+| `array` | Empirical distribution given as absolute values and weights (`pd_array=`) |
 
-### Default Values
+See "Distribution Types" in the usage guide for the exact weight functions.
 
-| Constant | Default Value | Description |
-|----------|---------------|-------------|
-| `DEFAULT_PD_WIDTH` | `0.0` | Default polydispersity width (monodisperse) |
-| `DEFAULT_PD_N` | `35` | Default number of quadrature points |
-| `DEFAULT_PD_NSIGMA` | `3.0` | Default number of sigmas to include |
-| `DEFAULT_PD_TYPE` | `'gaussian'` | Default distribution type |
+### PD_TYPE_DEFAULTS
+
+The quadrature settings applied when `pd_type` changes, to every setting you
+have not chosen yourself. `None` means the type does not use the setting.
+
+| Type | `pd_n` | `pd_nsigma` |
+|------|--------|-------------|
+| `gaussian` | 35 | 3 |
+| `rectangle` | 35 | 1.73205 |
+| `uniform` | 35 | `None` |
+| `lognormal` | 80 | 8 |
+| `schulz` | 80 | 8 |
+| `boltzmann` | 35 | 3 |
+| `array` | `None` | `None` |
+
+### PD_DEFAULTS
+
+The block a polydisperse parameter starts with: `pd=0.0` (monodisperse),
+`pd_n=35`, `pd_nsigma=3.0`, `pd_type='gaussian'`, `vary=False`.

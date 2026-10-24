@@ -2,7 +2,6 @@ import warnings
 from typing import Any
 
 import numpy as np
-from sasmodels.direct_model import DirectModel
 
 from ..console import logger
 from ..results import FitArtifacts, FitResultContract, ParameterStateSnapshot
@@ -12,10 +11,12 @@ from .base import (
     build_result_parameters,
     extract_fit_index,
     normalize_message,
+    pd_block,
     pd_is_active,
     reduced_chisq,
     validate_covariance,
 )
+from .dispersion import IQuanaDirectModel, fit_state_arrays
 
 try:
     from scipy.optimize import differential_evolution, least_squares, leastsq
@@ -58,7 +59,11 @@ def fit_scipy(
     if fit_state.pd_enabled:
         for base_param in fit_state.polydisperse_param_names:
             pd_config = fit_state.polydisperse_params[base_param]
-            if pd_is_active(pd_config) and pd_config.get('vary', False):
+            if (
+                pd_is_active(pd_config)
+                and pd_config.get('vary', False)
+                and pd_config['pd_type'] != 'array'
+            ):
                 pd_name = f'{base_param}_pd'
                 param_names.append(pd_name)
                 x0_list.append(pd_config['pd'])
@@ -68,7 +73,7 @@ def fit_scipy(
     x0 = np.array(x0_list)
     bounds_lower = np.array(bounds_lower_list)
     bounds_upper = np.array(bounds_upper_list)
-    calculator = DirectModel(data, kernel)
+    calculator = IQuanaDirectModel(data, kernel, arrays=fit_state_arrays(fit_state, kernel.info))
     # sasmodels evaluates the theory only at the fitted points (inside
     # [qmin, qmax], unmasked); compare against the matching data subset.
     y_fit = np.asarray(calculator.Iq)
@@ -110,11 +115,10 @@ def fit_scipy(
             for base_param in fit_state.polydisperse_param_names:
                 pd_config = fit_state.polydisperse_params[base_param]
                 if pd_is_active(pd_config):
-                    if f'{base_param}_pd' not in par_dict:
-                        par_dict[f'{base_param}_pd'] = pd_config['pd']
-                    par_dict[f'{base_param}_pd_n'] = pd_config['pd_n']
-                    par_dict[f'{base_param}_pd_nsigma'] = pd_config['pd_nsigma']
-                    par_dict[f'{base_param}_pd_type'] = pd_config['pd_type']
+                    block = pd_block(base_param, pd_config)
+                    if f'{base_param}_pd' in par_dict:
+                        block.pop(f'{base_param}_pd', None)
+                    par_dict.update(block)
 
         apply_parameter_links(par_dict, fit_state.linked_params)
         return par_dict

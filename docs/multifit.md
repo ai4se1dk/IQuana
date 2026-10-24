@@ -318,6 +318,17 @@ truncation and distribution type stay per dataset, and relating widths with
 different distribution types is refused: 0.15 of a lognormal and 0.15 of a
 Schulz describe different distributions.
 
+A parameter with an `array` distribution (an empirical size distribution, see
+the usage guide) stays outside every relationship. An array has no width, and
+while it is active the parameter's own value does not enter the model. So
+`share()`, `link_params()` and `constrain()` refuse to name either the
+parameter or its width, and switching a parameter that is already shared,
+linked or constrained to `array` is refused too. Each dataset can still carry
+its own array, and the fit evaluates them.
+`fit['h2o'].plot_distribution('radius')` draws a dataset's distribution at the
+values the joint fit resolves, so a constrained radius or a shared width is
+shown as it will be fitted.
+
 `share()` also refuses members the models declare in **different units** —
 sharing asserts they are one measurement, and no conversion is applied. A
 directed `link_params()` across units is still allowed, because relating two

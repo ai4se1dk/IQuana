@@ -6,14 +6,17 @@ This script demonstrates how to:
 2. Enable and configure polydispersity parameters
 3. Set polydispersity width, distribution type, and other settings
 4. Compare fits with and without polydispersity
-5. Use different polydispersity distribution types
+5. Use different polydispersity distribution types, and see them
+6. Use an empirical (array) size distribution
 
 Polydispersity accounts for the size distribution of particles in a sample,
 which is common in real experimental systems where not all particles are
 exactly the same size.
 """
 
-from iquana import IQuana, PD_DEFAULTS, PD_DISTRIBUTION_TYPES
+import numpy as np
+
+from iquana import IQuana, PD_DEFAULTS, PD_DISTRIBUTION_TYPES, PD_TYPE_DEFAULTS
 
 # ============================================================================
 # Part 1: Checking Polydispersity Support
@@ -42,8 +45,9 @@ print(f"Polydisperse parameters: {pd_params}")
 # Show available distribution types
 print(f"\nAvailable distribution types: {PD_DISTRIBUTION_TYPES}")
 
-# Show default PD values
+# Show default PD values, and the quadrature each type switches to
 print(f"\nDefault PD values: {PD_DEFAULTS}")
+print(f"Per-type pd_n / pd_nsigma defaults: {PD_TYPE_DEFAULTS}")
 
 # ============================================================================
 # Part 2: Fitting WITHOUT Polydispersity (Baseline)
@@ -142,8 +146,9 @@ print("\n" + "=" * 80)
 print("Part 5: Using Different Distribution Types")
 print("=" * 80)
 
-# Lognormal distribution - often more realistic for particle sizes
-# as it prevents negative sizes and naturally skews toward smaller particles
+# Lognormal distribution - often more realistic for particle sizes:
+# it has no negative sizes and a long tail toward larger particles.
+# Switching to it also switches to its own quadrature (80 points over 8 sigma).
 fitter_lognorm = IQuana()
 fitter_lognorm.load_data('simulated_sans_data.csv')
 fitter_lognorm.set_model('sphere')
@@ -180,6 +185,69 @@ fitter_schulz.enable_polydispersity(True)
 print("Fitting with Schulz distribution...")
 result_schulz = fitter_schulz.fit(engine='bumps', method='amoeba')
 print(f"Reduced chi-squared (Schulz): {result_schulz['reduced_chisq']:.4f}")
+
+# ============================================================================
+# Part 5b: Seeing What a Width Means Under Each Distribution
+# ============================================================================
+
+print("\n" + "=" * 80)
+print("Part 5b: Seeing What a Width Means Under Each Distribution")
+print("=" * 80)
+
+# The same pd_width describes different shapes: 15% lognormal is skewed,
+# 15% gaussian is symmetric, and 'uniform' and 'rectangle' are boxes of
+# different half-widths (pd and sqrt(3)*pd). get_pd_weights() returns the
+# points and weights the fit integrates; plot_distribution() draws them.
+fitter_shapes = IQuana()
+fitter_shapes.load_data('simulated_sans_data.csv')
+fitter_shapes.set_model('sphere')
+fitter_shapes.set_param('radius', value=50)
+fitter_shapes.enable_polydispersity(True)
+
+for pd_type in ['gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz', 'boltzmann']:
+    fitter_shapes.set_pd_param('radius', pd_width=0.15, pd_type=pd_type)
+    values, weights = fitter_shapes.get_pd_weights('radius')
+    mean = np.average(values, weights=weights)
+    spread = np.sqrt(np.average((values - mean) ** 2, weights=weights))
+    print(
+        f"  {pd_type:<10} {len(values):>3} points, radius {values.min():6.1f} to "
+        f"{values.max():6.1f} A, mean {mean:5.1f} A, std {spread:4.1f} A"
+    )
+    # show=False builds the figure without opening it; drop it to see each one.
+    fitter_shapes.plot_distribution('radius', show=False)
+
+fitter_shapes.set_pd_param('radius', pd_type='lognormal')
+fitter_shapes.plot_distribution('radius')
+
+# ============================================================================
+# Part 5c: An Empirical (Array) Size Distribution
+# ============================================================================
+
+print("\n" + "=" * 80)
+print("Part 5c: An Empirical (Array) Size Distribution")
+print("=" * 80)
+
+# A measured or simulated distribution: absolute radii (in Angstrom) and their
+# weights. A two-column text file works the same way: pd_array='dist.txt'.
+radii = np.linspace(30, 75, 46)
+bimodal = np.exp(-0.5 * ((radii - 42) / 3) ** 2) + 0.5 * np.exp(-0.5 * ((radii - 62) / 4) ** 2)
+
+fitter_array = IQuana()
+fitter_array.load_data('simulated_sans_data.csv')
+fitter_array.set_model('sphere')
+fitter_array.set_param('scale', value=0.01, min=0.001, max=1, vary=True)
+fitter_array.set_param('background', value=0.001, min=0, max=0.1, vary=True)
+fitter_array.set_param('sld', value=4.0, vary=False)
+fitter_array.set_param('sld_solvent', value=1.0, vary=False)
+fitter_array.set_pd_param('radius', pd_type='array', pd_array=(radii, bimodal))
+fitter_array.enable_polydispersity(True)
+
+# The radius value no longer enters the model, so it cannot be fitted; the
+# array is saved inline by save_analysis().
+fitter_array.get_pd_params()
+result_array = fitter_array.fit(engine='bumps', method='amoeba')
+print(f"Reduced chi-squared (bimodal array): {result_array['reduced_chisq']:.4f}")
+fitter_array.plot_distribution('radius')
 
 # ============================================================================
 # Part 6: Fitting the Polydispersity Width
@@ -317,7 +385,10 @@ print("""
 ✓ Use set_pd_param() to configure pd_width, pd_type, pd_n, pd_nsigma, vary
 ✓ Use enable_polydispersity(True/False) to toggle PD globally
 ✓ PD values are preserved when toggling - no need to reconfigure
-✓ Available distribution types: gaussian, lognormal, schulz, rectangle, boltzmann
+✓ Available distribution types: gaussian, rectangle, uniform, lognormal, schulz,
+  boltzmann, and array (your own values and weights)
+✓ Changing pd_type applies that type's pd_n / pd_nsigma defaults unless you set them
+✓ Use plot_distribution() to see the distribution a fit integrates over
 ✓ pd_width is relative: 0.1 = 10% polydispersity
 ✓ Set vary=True on pd_param to fit the polydispersity width itself
 """)

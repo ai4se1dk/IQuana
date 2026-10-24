@@ -19,7 +19,6 @@ from plotly.graph_objects import Figure
 # SasModels and SasData imports
 from sasmodels import core
 from sasmodels.core import load_model
-from sasmodels.direct_model import DirectModel
 
 from . import plotting
 from .console import ARROW, CHI_SQUARED, INVERSE_ANGSTROM, OK, SIGMA, logger
@@ -43,7 +42,14 @@ from .fitting import (
     fit_bumps_dream,
     fit_scipy,
 )
-from .fitting.base import at_bound, extract_fit_index, pd_is_active, reduced_chisq
+from .fitting.base import at_bound, extract_fit_index, pd_block, pd_is_active, reduced_chisq
+from .fitting.dispersion import (
+    IQuanaDirectModel,
+    array_dispersions,
+    find_parameter,
+    fit_state_arrays,
+    resolve_dispersion,
+)
 from .fitting.theory import (
     build_model_parameters,
     evaluate_theory,
@@ -890,6 +896,7 @@ class IQuana:
         # desynchronized state in which the next fit silently evaluates the
         # product kernel with default structure-factor parameters.
         validate_radius_effective_mode(radius_effective_mode)
+        self._param_manager.require_link_radius_allowed(radius_effective_mode)
 
         # Create product model name
         full_model_name = f'{self.model_name}@{structure_factor_name}'
@@ -985,21 +992,46 @@ class IQuana:
         pd_nsigma: float | None = None,
         pd_type: str | None = None,
         vary: bool | None = None,
+        pd_array: Any = None,
     ) -> None:
         """
         Configure polydispersity for a parameter.
 
+        One call is applied atomically: if any part is rejected, nothing changes.
+
+        **Defaults follow the distribution.** When ``pd_type`` changes, ``pd_n``
+        and ``pd_nsigma`` take the new type's defaults (``PD_TYPE_DEFAULTS``:
+        lognormal and Schulz integrate 80 points over 8 sigma) unless you have
+        set them yourself. Values you pass always win, now and after any later
+        type change, and survive save/load.
+
+        **Array distributions.** ``pd_type='array'`` with ``pd_array=`` uses an
+        empirical distribution. Its values are absolute parameter values in the
+        parameter's own units (Angstrom for a radius), not offsets from the
+        parameter value. The parameter then becomes a fixed constant: neither
+        its value nor a width can be fitted, and it cannot be linked or shared.
+        Points outside the model's limits (a negative radius) are dropped and
+        reported.
+
         Args:
             param_name: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
-            pd_n: Number of Gaussian quadrature points (default: 35)
-            pd_nsigma: Number of sigmas to include (default: 3.0)
-            pd_type: Distribution type ('gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann')
+            pd_n: Number of quadrature points (default depends on pd_type)
+            pd_nsigma: Number of sigmas to include (default depends on pd_type)
+            pd_type: Distribution type, one of ``PD_DISTRIBUTION_TYPES``:
+                'gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz',
+                'boltzmann', 'array'
             vary: Whether to vary the pd_width during fitting
+            pd_array: For ``pd_type='array'``: a text file whose first two
+                columns are values and weights, a ``(values, weights)`` pair,
+                or an (N, 2) numpy array of ``(value, weight)`` rows. Weights
+                are normalised to sum to one.
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
-            ValueError: If pd_type is not a valid distribution type
+            ValueError: If a setting is invalid; if ``vary=True`` is asked of an
+                array distribution; or if an array is requested for a parameter
+                that is linked or shared.
         """
         self._param_manager.set_pd_param(
             param_name,
@@ -1008,6 +1040,7 @@ class IQuana:
             pd_nsigma=pd_nsigma,
             pd_type=pd_type,
             vary=vary,
+            pd_array=pd_array,
         )
 
     def get_pd_param(self, param_name: str) -> dict[str, Any]:
@@ -1018,13 +1051,110 @@ class IQuana:
             param_name: Name of the base parameter (e.g., 'radius')
 
         Returns:
-            Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, and active values.
-            'active' indicates whether polydispersity is active for this parameter (pd > 0).
+            Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, pd_n_explicit,
+            pd_nsigma_explicit, pd_array and active. The two ``_explicit``
+            flags say whether ``pd_n`` / ``pd_nsigma`` were chosen by you or
+            are the distribution's defaults. ``pd_array`` is None, or for an
+            array distribution a dict of copies of ``values`` and ``weights``
+            plus the ``source`` file. ``active`` says whether the distribution
+            takes part in evaluation (an array always does; otherwise pd > 0
+            or a varying width).
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
         """
         return self._param_manager.get_pd_param(param_name)
+
+    def _effective_dispersion(
+        self,
+        param_name: str,
+        *,
+        center: float | None = None,
+        width: float | None = None,
+    ) -> tuple[Any, dict[str, Any], Any]:
+        """Resolve one parameter's distribution as the fit would integrate it now.
+
+        *center* and *width* override the fitter's own value and width; a
+        simultaneous fit passes the graph-resolved ones.
+
+        Returns ``(effective, config, parameter)``: the
+        :class:`~iquana.fitting.dispersion.EffectiveDispersion`, the
+        configuration block it came from, and the sasmodels parameter.
+        """
+        self._require_model()
+        manager = self._param_manager
+        manager.get_pd_param(param_name)  # KeyError naming the valid parameters
+        canonical = manager._resolve_canonical(param_name)
+        config = dict(manager.polydisperse_params[canonical])
+        if width is not None:
+            config['pd'] = float(width)
+        parameter = find_parameter(self.kernel.info, canonical)
+        if center is None:
+            center = manager.get_canonical_param_values().get(canonical, parameter.default)
+        effective = resolve_dispersion(
+            parameter,
+            float(center),
+            config,
+            manager.is_pd_enabled(),
+            active=canonical in self.kernel.info.parameters.pd_1d,
+        )
+        return effective, config, parameter
+
+    def get_pd_weights(self, param_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """
+        The distribution a fit integrates over for one parameter, right now.
+
+        These are the per-parameter quadrature points and weights handed to
+        the sasmodels kernel at the current parameter value: computed by
+        sasmodels' own ``weights.get_weights`` for the analytic types, and
+        taken from the stored distribution for ``'array'`` after dropping
+        points outside the model's limits. Weights sum to one. With
+        polydispersity disabled, or a zero width, this is a single point at the
+        parameter value, because that is what the fit uses.
+
+        The kernel additionally skips joint combinations whose product of
+        weights falls below its cutoff (1e-5); with several dispersed
+        parameters that choice is not visible per parameter.
+
+        Args:
+            param_name: Name of the base parameter (e.g., 'radius')
+
+        Returns:
+            ``(values, weights)`` as new arrays.
+
+        Raises:
+            KeyError: If param_name is not a polydisperse parameter
+            ValueError: If no model is set, or an array distribution has no
+                point inside the model's limits.
+        """
+        effective, _config, _parameter = self._effective_dispersion(param_name)
+        return np.array(effective.values, copy=True), np.array(effective.weights, copy=True)
+
+    def plot_distribution(self, param_name: str, show: bool | None = None) -> Figure:
+        """
+        Plot the size distribution a fit integrates over for one parameter.
+
+        One marker per quadrature point of :meth:`get_pd_weights`, with a
+        dashed line at the parameter value. Use it to see what a width means
+        under each distribution type: 15 % lognormal and 15 % gaussian are
+        different shapes. Not to be confused with
+        :meth:`plot_param_distribution`, which shows a posterior marginal.
+
+        Args:
+            param_name: Name of the base parameter (e.g., 'radius')
+            show: Same display convention as plot_results().
+
+        Returns:
+            Plotly Figure object
+        """
+        effective, config, parameter = self._effective_dispersion(param_name)
+        return plotting.plot_pd_weights(
+            effective,
+            name=param_name,
+            units=getattr(parameter, 'units', ''),
+            pd_config=config,
+            show=show,
+        )
 
     def enable_polydispersity(self, enabled: bool = True) -> None:
         """
@@ -1266,15 +1396,27 @@ class IQuana:
                 label = moniker
 
             part_kernel = load_model(part_name, dtype='single', platform='dll')
+
+            # This component's active PD blocks under the part's own names.
+            prefix_marker = f'{prefix}_'
+            part_pd = {
+                base_param[len(prefix_marker) :]: pd_config
+                for base_param, pd_config in pd_settings.items()
+                if base_param.startswith(prefix_marker)
+            }
+
             # Evaluated through the same resolution as the fit: otherwise a
             # slit or custom-pinhole fit would overlay sharp component curves
             # under a smeared total.
-            calculator = DirectModel(evaluation_data, part_kernel)
+            calculator = IQuanaDirectModel(
+                evaluation_data,
+                part_kernel,
+                arrays=array_dispersions(part_pd, True, part_kernel.info),
+            )
 
             # Map fitted values by stripping the component prefix; fold in
             # active PD settings the same way the posterior evaluator does.
             part_pars: dict[str, Any] = {}
-            prefix_marker = f'{prefix}_'
             for canonical, value in canonical_values.items():
                 if canonical.startswith(prefix_marker):
                     stripped = canonical[len(prefix_marker) :]
@@ -1284,13 +1426,8 @@ class IQuana:
             part_scale = canonical_values.get(f'{prefix}_scale', 1.0)
             part_pars['scale'] = part_scale
             part_pars['background'] = 0.0
-            for base_param, pd_config in pd_settings.items():
-                if base_param.startswith(prefix_marker):
-                    stripped = base_param[len(prefix_marker) :]
-                    part_pars[f'{stripped}_pd'] = pd_config['pd']
-                    part_pars[f'{stripped}_pd_n'] = pd_config['pd_n']
-                    part_pars[f'{stripped}_pd_nsigma'] = pd_config['pd_nsigma']
-                    part_pars[f'{stripped}_pd_type'] = pd_config['pd_type']
+            for stripped, pd_config in part_pd.items():
+                part_pars.update(pd_block(stripped, pd_config))
 
             curves[label] = global_scale * np.asarray(calculator(**part_pars))
 
@@ -1371,7 +1508,8 @@ class IQuana:
         # Re-evaluating legacy lmfit runtime state: use the same evaluation
         # copy the fit itself used, or the re-plotted/saved curve would be
         # unsmeared while the fit was smeared.
-        calculator = DirectModel(self._evaluation_data(warn=False), self.kernel)
+        # No PD blocks or arrays here: this legacy dict never carried them.
+        calculator = IQuanaDirectModel(self._evaluation_data(warn=False), self.kernel)
         par_dict = {name: info['value'] for name, info in self.fit_result['parameters'].items()}
         fit_index = extract_fit_index(calculator)
         resolved_index = resolve_fit_index(fit_index, len(self.data.x))
@@ -1857,8 +1995,10 @@ class IQuana:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate the model on *data* at the current parameters (+ overrides)."""
         self._require_model()
-        pars = build_model_parameters(self._param_manager.snapshot_fit_state(), overrides)
-        return evaluate_theory(data, self.kernel, pars)
+        fit_state = self._param_manager.snapshot_fit_state()
+        pars = build_model_parameters(fit_state, overrides)
+        arrays = fit_state_arrays(fit_state, self.kernel.info)
+        return evaluate_theory(data, self.kernel, pars, arrays)
 
     def calculate(self, q: np.ndarray | None = None, dq: float | None = None) -> np.ndarray:
         """

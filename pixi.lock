@@ -10500,7 +10500,7 @@ packages:
   - numpy>=2.0
   - plotly>=5.0
   - scipy>=1.7
-  - sasmodels>=1.0
+  - sasmodels>=1.0.12
   - sasdata>=0.8
   - bumps>=1.0
   - pytest>=7.0 ; extra == 'dev'

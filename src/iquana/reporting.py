@@ -189,11 +189,16 @@ def _settings_rows(fitter: Any) -> list[tuple[str, str]]:
 
     if fitter.supports_polydispersity():
         enabled = fitter.is_polydispersity_enabled()
-        active = [
-            f'{name} {fitter.get_pd_param(name)["pd"]:.4g} {fitter.get_pd_param(name)["pd_type"]}'
-            for name in fitter.get_polydisperse_parameters()
-            if fitter.get_pd_param(name)['pd'] > 0
-        ]
+        active = []
+        for name in fitter.get_polydisperse_parameters():
+            config = fitter.get_pd_param(name)
+            if config['pd_type'] == 'array':
+                source = config['pd_array']['source']
+                where = f', {os.path.basename(source)}' if source else ''
+                count = len(config['pd_array']['values'])
+                active.append(f'{name} array ({count} points{where})')
+            elif config['pd'] > 0:
+                active.append(f'{name} {config["pd"]:.4g} {config["pd_type"]}')
         detail = ', '.join(active) if active else 'none configured'
         rows.append(('Polydispersity', f'{"on" if enabled else "off"}: {detail}'))
 
