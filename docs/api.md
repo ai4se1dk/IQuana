@@ -377,10 +377,10 @@ Internal class for managing model parameters and polydispersity settings.
       show_root_heading: true
       show_source: true
       members:
-        - initialize_parameters
-        - get_parameter_names
-        - get_parameter
-        - set_parameter
+        - initialize_from_kernel
+        - get_param_dict
+        - get_param_values
+        - set_param
         - get_polydisperse_parameters
         - has_polydisperse_parameters
         - set_pd_param
@@ -437,13 +437,13 @@ Internal class for managing structure factor selection and parameter backup/rest
 
 ## Polydispersity Constants
 
-The following constants are available in `iquana.modeling.parameters`:
-
-### PD_DISTRIBUTION_TYPES
-
-```python
-PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
-```
+::: iquana.modeling.polydispersity
+    options:
+      show_root_heading: false
+      show_source: false
+      members:
+        - PD_DEFAULTS
+        - PD_DISTRIBUTION_TYPES
 
 Supported polydispersity distribution types:
 
@@ -454,12 +454,3 @@ Supported polydispersity distribution types:
 | `lognormal` | Log-normal distribution |
 | `schulz` | Schulz distribution (common for polymers) |
 | `boltzmann` | Boltzmann distribution |
-
-### Default Values
-
-| Constant | Default Value | Description |
-|----------|---------------|-------------|
-| `DEFAULT_PD_WIDTH` | `0.0` | Default polydispersity width (monodisperse) |
-| `DEFAULT_PD_N` | `35` | Default number of quadrature points |
-| `DEFAULT_PD_NSIGMA` | `3.0` | Default number of sigmas to include |
-| `DEFAULT_PD_TYPE` | `'gaussian'` | Default distribution type |
