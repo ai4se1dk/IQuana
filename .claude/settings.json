@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "PowerShell(& .pixi\\\\envs\\\\default\\\\python.exe -I \"C:\\\\Users\\\\PIOTRR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--projects-ai-IQuana\\\\7983c089-e5bf-4fe7-8b1c-6ce6af2e6038\\\\scratchpad\\\\checks.py\")",
-      "PowerShell(python -m pytest tests/test_fitting_lmfit.py -q 2>&1)"
+      "mcp__GitKraken__issues_get_detail",
+      "Bash(python -m pytest tests -q -x)"
     ]
   }
 }

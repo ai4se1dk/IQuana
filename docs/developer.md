@@ -26,11 +26,6 @@ To run all tests:
 pytest
 ```
 
-Or using the provided script:
-```bash
-python run_tests.py
-```
-
 To run tests with coverage:
 ```bash
 pytest --cov=iquana
