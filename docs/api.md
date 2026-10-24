@@ -381,10 +381,10 @@ Internal class for managing model parameters and polydispersity settings.
       show_root_heading: true
       show_source: true
       members:
-        - initialize_parameters
-        - get_parameter_names
-        - get_parameter
-        - set_parameter
+        - initialize_from_kernel
+        - get_param_dict
+        - get_param_values
+        - set_param
         - get_polydisperse_parameters
         - has_polydisperse_parameters
         - set_pd_param
