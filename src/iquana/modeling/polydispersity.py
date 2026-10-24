@@ -9,8 +9,11 @@ PD_DEFAULTS = {
     'pd_type': 'gaussian',
     'vary': False,
 }
+"""Initial polydispersity settings for each parameter: width 0 (monodisperse),
+35 quadrature points spanning ±3σ of a fixed Gaussian."""
 
 PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
+"""Distribution types accepted by ``set_pd_param(pd_type=...)``."""
 
 
 class PolydispersityManager:
