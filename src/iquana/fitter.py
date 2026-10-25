@@ -44,6 +44,7 @@ from .fitting import (
     fit_scipy,
 )
 from .fitting.base import at_bound, extract_fit_index, pd_is_active, reduced_chisq
+from .fitting.dispersion import find_parameter, resolve_dispersion
 from .fitting.theory import (
     build_model_parameters,
     evaluate_theory,
@@ -1038,6 +1039,88 @@ class IQuana:
             KeyError: If param_name is not a polydisperse parameter
         """
         return self._param_manager.get_pd_param(param_name)
+
+    def _effective_dispersion(
+        self,
+        param_name: str,
+        *,
+        center: float | None = None,
+        width: float | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Resolve one parameter's distribution as the fit would integrate it now.
+
+        *center* and *width* override the fitter's own value and width; a
+        simultaneous fit passes the graph-resolved ones.
+
+        Returns ``(effective, config)``: the
+        :class:`~iquana.fitting.dispersion.EffectiveDispersion` and the
+        configuration block it came from.
+        """
+        self._require_model()
+        manager = self._param_manager
+        manager.get_pd_param(param_name)  # KeyError naming the valid parameters
+        canonical = manager._resolve_canonical(param_name)
+        config = dict(manager.polydisperse_params[canonical])
+        if width is not None:
+            config['pd'] = float(width)
+        parameter = find_parameter(self.kernel.info, canonical)
+        if center is None:
+            center = manager.get_canonical_param_values().get(canonical, parameter.default)
+        effective = resolve_dispersion(
+            parameter,
+            float(center),
+            config,
+            manager.is_pd_enabled(),
+            active=canonical in self.kernel.info.parameters.pd_1d,
+        )
+        return effective, config
+
+    def get_pd_weights(self, param_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """
+        The distribution a fit integrates over for one parameter, right now.
+
+        These are the per-parameter quadrature points and weights handed to
+        the sasmodels kernel at the current parameter value, computed by
+        sasmodels' own ``weights.get_weights``. Weights sum to one. With
+        polydispersity disabled, or a zero width, this is a single point at the
+        parameter value, because that is what the fit uses.
+
+        The kernel additionally skips joint combinations whose product of
+        weights falls below its cutoff (1e-5); with several dispersed
+        parameters that choice is not visible per parameter.
+
+        Args:
+            param_name: Name of the base parameter (e.g., 'radius')
+
+        Returns:
+            ``(values, weights)`` as new arrays.
+
+        Raises:
+            KeyError: If param_name is not a polydisperse parameter
+            ValueError: If no model is set.
+        """
+        effective, _config = self._effective_dispersion(param_name)
+        return np.array(effective.values, copy=True), np.array(effective.weights, copy=True)
+
+    def plot_distribution(self, param_name: str, show: bool | None = None) -> Figure:
+        """
+        Plot the size distribution a fit integrates over for one parameter.
+
+        One marker per quadrature point of :meth:`get_pd_weights`, with a
+        dashed line at the parameter value. Use it to see what a width means
+        under each distribution type: 15 % lognormal and 15 % gaussian are
+        different shapes. Not to be confused with
+        :meth:`plot_param_distribution`, which shows a posterior marginal.
+
+        Args:
+            param_name: Name of the base parameter (e.g., 'radius')
+            show: Same display convention as plot_results().
+
+        Returns:
+            Plotly Figure object
+        """
+        effective, config = self._effective_dispersion(param_name)
+        return plotting.plot_pd_weights(effective, name=param_name, pd_config=config, show=show)
 
     def enable_polydispersity(self, enabled: bool = True) -> None:
         """

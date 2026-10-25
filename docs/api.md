@@ -58,6 +58,8 @@ The main class for SANS data fitting.
         - enable_polydispersity
         - is_polydispersity_enabled
         - get_pd_params
+        - get_pd_weights
+        - plot_distribution
         - get_varying_pd_params
 
 ### Composite model naming
@@ -142,6 +144,8 @@ result nobody asked for.
         - get_params
         - get_pd_param
         - get_pd_params
+        - get_pd_weights
+        - plot_distribution
         - get_polydisperse_parameters
         - get_varying_pd_params
         - get_q_range

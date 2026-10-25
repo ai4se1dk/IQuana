@@ -6,12 +6,14 @@ This script demonstrates how to:
 2. Enable and configure polydispersity parameters
 3. Set polydispersity width, distribution type, and other settings
 4. Compare fits with and without polydispersity
-5. Use different polydispersity distribution types
+5. Use different polydispersity distribution types, and see them
 
 Polydispersity accounts for the size distribution of particles in a sample,
 which is common in real experimental systems where not all particles are
 exactly the same size.
 """
+
+import numpy as np
 
 from iquana import IQuana, PD_DEFAULTS, PD_DISTRIBUTION_TYPES, PD_TYPE_DEFAULTS
 
@@ -184,6 +186,39 @@ result_schulz = fitter_schulz.fit(engine='bumps', method='amoeba')
 print(f"Reduced chi-squared (Schulz): {result_schulz['reduced_chisq']:.4f}")
 
 # ============================================================================
+# Part 5b: Seeing What a Width Means Under Each Distribution
+# ============================================================================
+
+print("\n" + "=" * 80)
+print("Part 5b: Seeing What a Width Means Under Each Distribution")
+print("=" * 80)
+
+# The same pd_width describes different shapes: 15% lognormal is skewed,
+# 15% gaussian is symmetric, and 'uniform' and 'rectangle' are boxes of
+# different half-widths (pd and sqrt(3)*pd). get_pd_weights() returns the
+# points and weights the fit integrates; plot_distribution() draws them.
+fitter_shapes = IQuana()
+fitter_shapes.load_data('simulated_sans_data.csv')
+fitter_shapes.set_model('sphere')
+fitter_shapes.set_param('radius', value=50)
+fitter_shapes.enable_polydispersity(True)
+
+for pd_type in ['gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz', 'boltzmann']:
+    fitter_shapes.set_pd_param('radius', pd_width=0.15, pd_type=pd_type)
+    values, weights = fitter_shapes.get_pd_weights('radius')
+    mean = np.average(values, weights=weights)
+    spread = np.sqrt(np.average((values - mean) ** 2, weights=weights))
+    print(
+        f"  {pd_type:<10} {len(values):>3} points, radius {values.min():6.1f} to "
+        f"{values.max():6.1f} A, mean {mean:5.1f} A, std {spread:4.1f} A"
+    )
+    # show=False builds the figure without opening it; drop it to see each one.
+    fitter_shapes.plot_distribution('radius', show=False)
+
+fitter_shapes.set_pd_param('radius', pd_type='lognormal')
+fitter_shapes.plot_distribution('radius')
+
+# ============================================================================
 # Part 6: Fitting the Polydispersity Width
 # ============================================================================
 
@@ -322,6 +357,7 @@ print("""
 ✓ Available distribution types: gaussian, rectangle, uniform, lognormal, schulz,
   boltzmann
 ✓ Changing pd_type applies that type's pd_n / pd_nsigma defaults unless you set them
+✓ Use plot_distribution() to see the distribution a fit integrates over
 ✓ pd_width is relative: 0.1 = 10% polydispersity
 ✓ Set vary=True on pd_param to fit the polydispersity width itself
 """)
