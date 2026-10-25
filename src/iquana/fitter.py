@@ -989,17 +989,27 @@ class IQuana:
         """
         Configure polydispersity for a parameter.
 
+        One call is applied atomically: if any part is rejected, nothing changes.
+
+        **Defaults follow the distribution.** When ``pd_type`` changes, ``pd_n``
+        and ``pd_nsigma`` take the new type's defaults (``PD_TYPE_DEFAULTS``:
+        lognormal and Schulz integrate 80 points over 8 sigma) unless you have
+        set them yourself. Values you pass always win, now and after any later
+        type change, and survive save/load.
+
         Args:
             param_name: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
-            pd_n: Number of Gaussian quadrature points (default: 35)
-            pd_nsigma: Number of sigmas to include (default: 3.0)
-            pd_type: Distribution type ('gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann')
+            pd_n: Number of quadrature points (default depends on pd_type)
+            pd_nsigma: Number of sigmas to include (default depends on pd_type)
+            pd_type: Distribution type, one of ``PD_DISTRIBUTION_TYPES``:
+                'gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz',
+                'boltzmann'
             vary: Whether to vary the pd_width during fitting
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
-            ValueError: If pd_type is not a valid distribution type
+            ValueError: If a setting is invalid
         """
         self._param_manager.set_pd_param(
             param_name,
@@ -1018,8 +1028,11 @@ class IQuana:
             param_name: Name of the base parameter (e.g., 'radius')
 
         Returns:
-            Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, and active values.
-            'active' indicates whether polydispersity is active for this parameter (pd > 0).
+            Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, pd_n_explicit,
+            pd_nsigma_explicit and active. The two ``_explicit`` flags say
+            whether ``pd_n`` / ``pd_nsigma`` were chosen by you or are the
+            distribution's defaults. 'active' indicates whether
+            polydispersity is active for this parameter (pd > 0).
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter

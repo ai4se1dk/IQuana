@@ -14,6 +14,13 @@ BOUND_ATOL = 1e-12
 #: a span fraction would flag every fitted scale below ~1e-3, which is a normal SANS value.
 BOUND_RTOL = 1e-4
 
+#: Relative accuracy of the model curve. IQuana compiles sasmodels kernels in
+#: single precision (``load_model(..., dtype='single')``), so two evaluations agree
+#: to about 1e-7 and no further, and kernels built by different compilers (TinyCC,
+#: gcc, MSVC, or clang on Apple Silicon, which fuses multiply-adds) can differ by
+#: more where the model loses precision to cancellation.
+KERNEL_PRECISION = float(np.finfo(np.float32).eps)
+
 
 def pd_is_active(pd_config: dict[str, Any]) -> bool:
     """Return whether a PD configuration should be included in model evaluation."""

@@ -1,0 +1,179 @@
+{
+  "schema": {
+    "format": "iquana-analysis",
+    "version": 2,
+    "written_by": "0.4.0",
+    "sasmodels": "1.0.12"
+  },
+  "data": {
+    "source": "file",
+    "label": "example_sans_data.dat",
+    "n_points": 70,
+    "array_fingerprint_at_load": "5e1be9b7f15b677f5f81db7e39a73a20664a193142905c08e6523492a7cc3d50",
+    "array_fingerprint_now": "5e1be9b7f15b677f5f81db7e39a73a20664a193142905c08e6523492a7cc3d50",
+    "processes": [],
+    "path_absolute": null,
+    "path_relative": "../../../example_sans_data.dat",
+    "dataset": 0,
+    "dataset_index": 0,
+    "n_datasets": 1,
+    "file_sha256_at_load": "6d4c10fa378cd3572fa4e535b331e4f6210ef4e68e0ce4e61d910dddec9b9587",
+    "file_sha256_now": "6d4c10fa378cd3572fa4e535b331e4f6210ef4e68e0ce4e61d910dddec9b9587"
+  },
+  "configuration": {
+    "model_name": "sphere",
+    "components": [],
+    "shared": [],
+    "structure_factor": {
+      "name": null,
+      "radius_effective_mode": "unconstrained",
+      "form_factor_backup": {}
+    },
+    "params": {
+      "sld": {
+        "value": 1.0,
+        "min": -9.0,
+        "max": 11.0,
+        "vary": false
+      },
+      "sld_solvent": {
+        "value": 6.0,
+        "min": -54.0,
+        "max": 66.0,
+        "vary": false
+      },
+      "radius": {
+        "value": 40.0,
+        "min": 1.0,
+        "max": 200.0,
+        "vary": true
+      },
+      "scale": {
+        "value": 0.01,
+        "min": 1e-06,
+        "max": 1.0,
+        "vary": true
+      },
+      "background": {
+        "value": 0.0,
+        "min": 0.0,
+        "max": "Infinity",
+        "vary": false
+      }
+    },
+    "polydispersity": {
+      "enabled": true,
+      "params": {
+        "radius": {
+          "pd": 0.12,
+          "pd_n": 35,
+          "pd_nsigma": 3.0,
+          "pd_type": "lognormal",
+          "vary": true
+        }
+      },
+      "backup": null
+    },
+    "links": {}
+  },
+  "resolution": {
+    "mode": "data",
+    "dq_over_q": null,
+    "slit_length": null,
+    "slit_width": null
+  },
+  "weighting": {
+    "mode": "dI"
+  },
+  "fit_range": null,
+  "result": {
+    "engine": "bumps",
+    "method": "lm",
+    "chisq": 788048.9217560308,
+    "reduced_chisq": 11588.954731706335,
+    "n_points": 70,
+    "n_free": 2,
+    "dof": 68,
+    "weighting_note": "dI",
+    "converged": true,
+    "message": "synthetic",
+    "resolution": {
+      "mode": "data",
+      "dq_over_q": null,
+      "slit_length": null,
+      "slit_width": null
+    },
+    "weighting": null,
+    "parameters": {
+      "sld": {
+        "value": 1,
+        "stderr": 0.5,
+        "formatted": "1 +/- 0.5",
+        "fixed": true,
+        "linked_to": null
+      },
+      "sld_solvent": {
+        "value": 6,
+        "stderr": 0.5,
+        "formatted": "6 +/- 0.5",
+        "fixed": true,
+        "linked_to": null
+      },
+      "radius": {
+        "value": 40.0,
+        "stderr": 0.5,
+        "formatted": "40 +/- 0.5",
+        "fixed": false,
+        "linked_to": null
+      },
+      "scale": {
+        "value": 0.01,
+        "stderr": 0.5,
+        "formatted": "0.01 +/- 0.5",
+        "fixed": false,
+        "linked_to": null
+      },
+      "background": {
+        "value": 0.0,
+        "stderr": 0.5,
+        "formatted": "0 +/- 0.5",
+        "fixed": true,
+        "linked_to": null
+      }
+    },
+    "cov": [
+      [
+        0.25,
+        0.0
+      ],
+      [
+        0.0,
+        0.25
+      ]
+    ],
+    "cov_labels": [
+      "radius",
+      "scale"
+    ],
+    "cov_source": "synthetic",
+    "on_bounds": [],
+    "posterior": null,
+    "fit_context": {
+      "config_digest": "d7926ddb31a0ce7f7fb96f8631159369b595f61cabb9890653ea42e72bd7d603",
+      "resolution": {
+        "mode": "data",
+        "dq_over_q": null,
+        "slit_length": null,
+        "slit_width": null
+      },
+      "weighting": {
+        "mode": "dI"
+      },
+      "qmin": 0.001,
+      "qmax": 0.347387,
+      "n_points": 70,
+      "data_fingerprint": "5e1be9b7f15b677f5f81db7e39a73a20664a193142905c08e6523492a7cc3d50"
+    }
+  },
+  "result_omitted": null
+}

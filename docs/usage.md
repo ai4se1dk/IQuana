@@ -953,33 +953,67 @@ fitter.set_pd_param('radius', pd_width=0.1)
 fitter.set_pd_param(
     'radius',
     pd_width=0.15,  # 15% polydispersity
-    pd_n=50,  # Number of quadrature points (default: 35)
-    pd_nsigma=4.0,  # Number of sigmas to include (default: 3.0)
+    pd_n=50,  # Number of quadrature points (default depends on pd_type)
+    pd_nsigma=4.0,  # Number of sigmas to include (default depends on pd_type)
     pd_type='gaussian',  # Distribution type
     vary=True,  # Allow pd_width to vary during fitting
 )
 
 # Get current PD configuration
 pd_config = fitter.get_pd_param('radius')
-print(
-    pd_config
-)  # {'pd': 0.15, 'pd_n': 50, 'pd_nsigma': 4.0, 'pd_type': 'gaussian', 'vary': True, 'active': True}
+print(pd_config)
+# {'pd': 0.15, 'pd_n': 50, 'pd_nsigma': 4.0, 'pd_type': 'gaussian', 'vary': True,
+#  'pd_n_explicit': True, 'pd_nsigma_explicit': True, 'active': True}
 ```
+
+One `set_pd_param()` call is applied as a unit: if any part of it is rejected,
+nothing changes.
 
 ### Distribution Types
 
-IQuana supports several polydispersity distribution types:
+Six distribution types are available, as `PD_DISTRIBUTION_TYPES`. The table
+describes each one the way sasmodels computes it, which is what the fit
+integrates. For a size parameter, σ = `pd` × the parameter value.
 
-- `gaussian` - Gaussian/normal distribution (default)
-- `rectangle` - Uniform/rectangular distribution
-- `lognormal` - Log-normal distribution
-- `schulz` - Schulz distribution (common for polymers)
-- `boltzmann` - Boltzmann distribution
+| Type | Weight function | What `pd` is | Default `pd_n` | Default `pd_nsigma` |
+|---|---|---|---|---|
+| `gaussian` | exp(−(x−c)²/2σ²), cut at c ± nσ·σ | standard deviation / value | 35 | 3 |
+| `rectangle` | 1 for \|x−c\| ≤ √3 σ | standard deviation / value; the half-width is √3 σ | 35 | √3 |
+| `uniform` | 1 for \|x−c\| ≤ σ | **half-width** / value; the standard deviation is σ/√3 | 35 | not used |
+| `lognormal` | exp(−(ln x − ln c)²/2 pd²) / (x·pd) | **standard deviation of ln x**; c is the median, not the mean | 80 | 8 |
+| `schulz` | Schulz–Zimm with z = (c/σ)² | standard deviation / value | 80 | 8 |
+| `boltzmann` | exp(−\|x−c\|/σ) | **decay length** / value; the standard deviation is √2 σ | 35 | 3 |
+
+`rectangle` and `uniform` are both flat, but the same `pd` means different
+boxes: 0.1 is a ±17.3 % box for `rectangle` and a ±10 % box for `uniform`.
+For `lognormal`, the relative spread of x itself is √(exp(pd²) − 1), slightly
+more than `pd`. All of these describe the ideal continuous distribution.
+Truncation at `pd_nsigma`, the model's own limits (a radius cannot be
+negative) and the discrete quadrature all shift the moments that are actually
+integrated.
 
 ```python
 # Use Schulz distribution for polymer samples
 fitter.set_pd_param('radius', pd_width=0.2, pd_type='schulz')
 ```
+
+#### Defaults follow the distribution
+
+When `pd_type` changes, `pd_n` and `pd_nsigma` take the new type's defaults
+(`PD_TYPE_DEFAULTS`), because a lognormal or Schulz tail reaches much further
+than a gaussian. The change is logged:
+
+```
+radius: lognormal defaults applied (pd_n=80, pd_nsigma=8). Pass pd_n / pd_nsigma to override.
+```
+
+A value you set yourself always wins: it is kept through later type changes and
+through `save_analysis()` / `load_analysis()`. `get_pd_param()` reports which
+settings you chose in `pd_n_explicit` and `pd_nsigma_explicit`. An analysis
+saved before this behaviour existed loads with its numbers marked as chosen, so
+it reproduces exactly. The defaults are the sasmodels defaults, not a
+convergence guarantee: for a very wide distribution, check that `pd_nsigma`
+covers the tail.
 
 ### Enabling/Disabling Polydispersity
 

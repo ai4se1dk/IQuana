@@ -339,7 +339,8 @@ def test_round_trip_restores_the_mode_and_result(noisy, tmp_path):
     path = save(fitter, tmp_path)
 
     document = json.load(open(path, encoding='utf-8'))
-    assert document['schema']['version'] == SCHEMA_VERSION == 2
+    # Weighting is recorded from schema 2 on.
+    assert document['schema']['version'] == SCHEMA_VERSION >= 2
     assert document['weighting'] == {'mode': 'abs'}
 
     restored = IQuana.load_analysis(path, data=noisy)

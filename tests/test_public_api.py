@@ -28,6 +28,7 @@ class TestPublicApi(unittest.TestCase):
             'ParameterManager',
             'PD_DEFAULTS',
             'PD_DISTRIBUTION_TYPES',
+            'PD_TYPE_DEFAULTS',
             'get_all_models',
             'set_verbosity',
             'FitResultContract',
