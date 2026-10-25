@@ -10,11 +10,10 @@ try:  # bumps >= 1.0.4
 except ImportError:  # bumps <= 1.0.3
     from bumps.formatnum import format_uncertainty
 from bumps.names import FitProblem
-from sasmodels.bumps_model import Experiment
 from sasmodels.bumps_model import Model as BumpsModel
-from sasmodels.direct_model import DirectModel
 
 from ..console import CHI_SQUARED, logger
+from ..modeling.polydispersity import pd_block, pd_is_active
 from ..results import (
     MIN_POSTERIOR_PARAMETER_COUNT,
     MIN_POSTERIOR_SAMPLE_COUNT,
@@ -28,10 +27,10 @@ from .base import (
     apply_parameter_links,
     build_result_parameters,
     extract_fit_index,
-    pd_is_active,
     reduced_chisq,
     validate_covariance,
 )
+from .dispersion import IQuanaDirectModel, IQuanaExperiment, fit_state_arrays
 
 DEFAULT_DREAM_SAMPLES = 10000
 # bumps expresses burn and pop in DREAM's native units: burn counts
@@ -164,10 +163,7 @@ def build_bumps_model(
         for param_name in fit_state.polydisperse_param_names:
             pd_config = fit_state.polydisperse_params[param_name]
             if pd_is_active(pd_config) or param_name in forced:
-                pars[f'{param_name}_pd'] = pd_config['pd']
-                pars[f'{param_name}_pd_n'] = pd_config['pd_n']
-                pars[f'{param_name}_pd_nsigma'] = pd_config['pd_nsigma']
-                pars[f'{param_name}_pd_type'] = pd_config['pd_type']
+                pars.update(pd_block(param_name, pd_config))
 
     return BumpsModel(kernel, **pars)
 
@@ -214,7 +210,9 @@ def _build_bumps_problem(
     for follower, target in fit_state.linked_params.items():
         setattr(model, follower, getattr(model, target))
 
-    experiment = Experiment(data=data, model=model)
+    experiment = IQuanaExperiment(
+        data=data, model=model, arrays=fit_state_arrays(fit_state, kernel.info)
+    )
     problem = FitProblem(experiment)
     return problem, experiment
 
@@ -444,7 +442,9 @@ def _build_posterior_evaluator(
     as error bars would show, say, bars of exactly 1 under ``'none'``. Both
     are deep-copied so a later change to the fitter cannot alter the plot.
     """
-    calculator = DirectModel(deepcopy(data), kernel)
+    calculator = IQuanaDirectModel(
+        deepcopy(data), kernel, arrays=fit_state_arrays(fit_state, kernel.info)
+    )
     posterior_data = deepcopy(data if plot_data is None else plot_data)
     base_pars = {name: info['value'] for name, info in fit_state.params.items()}
 
@@ -452,10 +452,7 @@ def _build_posterior_evaluator(
         for base_param in fit_state.polydisperse_param_names:
             pd_config = fit_state.polydisperse_params[base_param]
             if pd_is_active(pd_config):
-                base_pars[f'{base_param}_pd'] = pd_config['pd']
-                base_pars[f'{base_param}_pd_n'] = pd_config['pd_n']
-                base_pars[f'{base_param}_pd_nsigma'] = pd_config['pd_nsigma']
-                base_pars[f'{base_param}_pd_type'] = pd_config['pd_type']
+                base_pars.update(pd_block(base_param, pd_config))
 
     def model_eval(sample: dict[str, float]) -> np.ndarray:
         pars = dict(base_pars)

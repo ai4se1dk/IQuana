@@ -447,7 +447,9 @@ The following constants are importable from `iquana` (and defined in
 ### PD_DISTRIBUTION_TYPES
 
 ```python
-PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz', 'boltzmann']
+PD_DISTRIBUTION_TYPES = [
+    'gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz', 'boltzmann', 'array',
+]
 ```
 
 | Type | Description |
@@ -458,6 +460,7 @@ PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'uniform', 'lognormal', 'schul
 | `lognormal` | Log-normal; `pd` is the standard deviation of ln x |
 | `schulz` | Schulz–Zimm distribution (common for polymers) |
 | `boltzmann` | Two-sided exponential; `pd` is the decay length |
+| `array` | Empirical distribution given as absolute values and weights (`pd_array=`) |
 
 See "Distribution Types" in the usage guide for the exact weight functions.
 
@@ -474,6 +477,7 @@ have not chosen yourself. `None` means the type does not use the setting.
 | `lognormal` | 80 | 8 |
 | `schulz` | 80 | 8 |
 | `boltzmann` | 35 | 3 |
+| `array` | `None` | `None` |
 
 ### PD_DEFAULTS
 

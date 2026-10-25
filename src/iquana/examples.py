@@ -45,10 +45,10 @@ from typing import Any
 import numpy as np
 from sasdata.dataloader.data_info import Data1D
 from sasmodels.core import load_model
-from sasmodels.direct_model import DirectModel
 
 from .data.loader import has_real_data, load_sans_data, normalize_sans_data, validate_q_grid
 from .fitter import IQuana
+from .fitting.dispersion import IQuanaDirectModel
 from .modeling.polydispersity import PD_DEFAULTS, PD_TYPE_DEFAULTS
 
 __all__ = [
@@ -710,6 +710,15 @@ def simulate(
             f'Parameter(s) {", ".join(sorted(unknown))} are not valid for model '
             f"'{model}'. Valid parameters: {', '.join(sorted(defaults))}."
         )
+    arrays = sorted(
+        key for key, value in params.items() if key.endswith('_pd_type') and value == 'array'
+    )
+    if arrays:
+        raise ValueError(
+            f'simulate() takes analytic distributions only ({", ".join(arrays)} = array). '
+            'For an empirical distribution, configure an IQuana with set_pd_param(..., '
+            "pd_type='array', pd_array=...) and evaluate it with calculate()."
+        )
 
     params = _complete_polydispersity(params)
 
@@ -723,7 +732,7 @@ def simulate(
         )
     )
 
-    calculator = DirectModel(template, kernel)
+    calculator = IQuanaDirectModel(template, kernel)
     intensity = np.asarray(calculator(**params), dtype=float)
 
     intensity, uncertainty = _apply_noise(intensity, noise, seed)

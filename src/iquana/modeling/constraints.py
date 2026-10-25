@@ -1042,6 +1042,13 @@ def _reject_incompatible_pd(
             f'{disabled[0].qualified} takes no part in the fit. Call '
             f"fit['{disabled[0].dataset}'].enable_polydispersity(True) first."
         )
+    arrays = [ref for ref in pd_members if descriptors[ref].pd_type == 'array']
+    if arrays:
+        # MultiFitter never emits an array width as a descriptor; this guards
+        # any other producer of descriptors.
+        raise ConstraintError(
+            f'{arrays[0].qualified} belongs to an array distribution, which has no width to relate.'
+        )
     types = {descriptors[ref].pd_type for ref in pd_members}
     if len(types) > 1:
         listed = ', '.join(

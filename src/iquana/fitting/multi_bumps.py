@@ -36,13 +36,13 @@ import numpy as np
 from bumps.fitters import fit as bumps_fit
 from bumps.names import FitProblem
 from bumps.parameter import Parameter
-from sasmodels.bumps_model import Experiment
 
 from ..console import CHI_SQUARED, logger
 from ..modeling.constraints import CompiledGraph, Constant, Negate, Power, Reference
 from ..results import ParameterStateSnapshot
 from .base import extract_fit_index, validate_covariance
 from .bumps_engine import DEFAULT_BUMPS_METHOD, _configured_budget, build_bumps_model
+from .dispersion import IQuanaExperiment, fit_state_arrays
 
 __all__ = ['MultiEntrySpec', 'MultiFitOutcome', 'DatasetOutcome', 'run_multi_bumps']
 
@@ -206,7 +206,12 @@ def build_multi_problem(
     _bind(entries, models, graph, objects)
 
     experiments = {
-        entry.name: Experiment(data=entry.data, model=models[entry.name], name=entry.name)
+        entry.name: IQuanaExperiment(
+            data=entry.data,
+            model=models[entry.name],
+            arrays=fit_state_arrays(entry.fit_state, entry.kernel.info),
+            name=entry.name,
+        )
         for entry in entries
     }
     # sqrt(a): bumps multiplies residuals by the weight, so the objective picks

@@ -1,3 +1,4 @@
+import os
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -614,10 +615,20 @@ PD_CENTER_LINE_COLOR = 'rgb(80, 80, 80)'
 def _pd_title(name: str, effective: Any, pd_config: dict[str, Any]) -> str:
     """Describe the distribution configured for *name*, and what disables it."""
     pd_type = pd_config['pd_type']
-    parts = [pd_type, f'pd = {pd_config["pd"]:g}', f'n = {pd_config["pd_n"]}']
-    if pd_type != 'uniform':
-        parts.append(f'nσ = {pd_config["pd_nsigma"]:g}')
-    title = f'{name} — {", ".join(parts)}'
+    if pd_type == 'array':
+        payload = pd_config['pd_array']
+        source = getattr(payload, 'source', None)
+        title = f'{name} — array, {len(payload)} points'
+        if source:
+            title += f' ({os.path.basename(source)})'
+        if effective.n_dropped and effective.limits is not None:
+            low, high = effective.limits
+            title += f', {effective.n_dropped} dropped outside [{low:g}, {high:g}]'
+    else:
+        parts = [pd_type, f'pd = {pd_config["pd"]:g}', f'n = {pd_config["pd_n"]}']
+        if pd_type != 'uniform':
+            parts.append(f'nσ = {pd_config["pd_nsigma"]:g}')
+        title = f'{name} — {", ".join(parts)}'
     if not effective.enabled:
         title += ' — polydispersity disabled'
     return title
@@ -627,6 +638,8 @@ def _single_point_note(effective: Any) -> str | None:
     """Why the plot shows one point, in words; None when it shows a distribution."""
     if len(effective.values) != 1:
         return None
+    if effective.kind == 'array':
+        return 'array: 1 point'
     if effective.reason == 'polydispersity disabled':
         return 'polydispersity disabled: the fit uses the single value'
     return f'monodisperse ({effective.reason})'
@@ -642,9 +655,9 @@ def plot_pd_weights(
     """Plot one parameter's effective polydispersity distribution.
 
     *effective* is a :class:`~iquana.fitting.dispersion.EffectiveDispersion`:
-    the points and weights the kernel sums over. One marker per point; the
-    connecting line only guides the eye. On a nonuniform grid the weights are
-    masses, not a density.
+    the points and weights the kernel sums over, already clipped and
+    normalised. One marker per point; the connecting line only guides the eye.
+    On a nonuniform grid the weights are masses, not a density.
     """
     unit = _UNIT_LABELS.get(effective.units, effective.units)
     x_title = f'{name} ({unit})' if unit else name

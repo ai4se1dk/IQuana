@@ -7,6 +7,7 @@ This script demonstrates how to:
 3. Set polydispersity width, distribution type, and other settings
 4. Compare fits with and without polydispersity
 5. Use different polydispersity distribution types, and see them
+6. Use an empirical (array) size distribution
 
 Polydispersity accounts for the size distribution of particles in a sample,
 which is common in real experimental systems where not all particles are
@@ -219,6 +220,36 @@ fitter_shapes.set_pd_param('radius', pd_type='lognormal')
 fitter_shapes.plot_distribution('radius')
 
 # ============================================================================
+# Part 5c: An Empirical (Array) Size Distribution
+# ============================================================================
+
+print("\n" + "=" * 80)
+print("Part 5c: An Empirical (Array) Size Distribution")
+print("=" * 80)
+
+# A measured or simulated distribution: absolute radii (in Angstrom) and their
+# weights. A two-column text file works the same way: pd_array='dist.txt'.
+radii = np.linspace(30, 75, 46)
+bimodal = np.exp(-0.5 * ((radii - 42) / 3) ** 2) + 0.5 * np.exp(-0.5 * ((radii - 62) / 4) ** 2)
+
+fitter_array = IQuana()
+fitter_array.load_data('simulated_sans_data.csv')
+fitter_array.set_model('sphere')
+fitter_array.set_param('scale', value=0.01, min=0.001, max=1, vary=True)
+fitter_array.set_param('background', value=0.001, min=0, max=0.1, vary=True)
+fitter_array.set_param('sld', value=4.0, vary=False)
+fitter_array.set_param('sld_solvent', value=1.0, vary=False)
+fitter_array.set_pd_param('radius', pd_type='array', pd_array=(radii, bimodal))
+fitter_array.enable_polydispersity(True)
+
+# The radius value no longer enters the model, so it cannot be fitted; the
+# array is saved inline by save_analysis().
+fitter_array.get_pd_params()
+result_array = fitter_array.fit(engine='bumps', method='amoeba')
+print(f"Reduced chi-squared (bimodal array): {result_array['reduced_chisq']:.4f}")
+fitter_array.plot_distribution('radius')
+
+# ============================================================================
 # Part 6: Fitting the Polydispersity Width
 # ============================================================================
 
@@ -355,7 +386,7 @@ print("""
 ✓ Use enable_polydispersity(True/False) to toggle PD globally
 ✓ PD values are preserved when toggling - no need to reconfigure
 ✓ Available distribution types: gaussian, rectangle, uniform, lognormal, schulz,
-  boltzmann
+  boltzmann, and array (your own values and weights)
 ✓ Changing pd_type applies that type's pd_n / pd_nsigma defaults unless you set them
 ✓ Use plot_distribution() to see the distribution a fit integrates over
 ✓ pd_width is relative: 0.1 = 10% polydispersity
