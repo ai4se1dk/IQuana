@@ -124,13 +124,20 @@ def _normalized_param(info: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalized_pd(info: dict[str, Any]) -> dict[str, Any]:
-    """One polydispersity block with its numbers in canonical types."""
+    """One polydispersity block with its numbers in canonical types.
+
+    Its exported shape differs from the pre-#90 shape only by the two
+    explicitness flags, which the configuration digest projects away
+    (``persistence.digest_view``).
+    """
     return {
         'pd': float(info['pd']),
         'pd_n': int(info['pd_n']),
         'pd_nsigma': float(info['pd_nsigma']),
         'pd_type': str(info['pd_type']),
         'vary': bool(info['vary']),
+        'pd_n_explicit': bool(info['pd_n_explicit']),
+        'pd_nsigma_explicit': bool(info['pd_nsigma_explicit']),
     }
 
 
@@ -184,12 +191,23 @@ def _validated_pd(name: str, saved: Any) -> dict[str, Any]:
         )
     if not isinstance(saved['vary'], bool):
         raise ValueError(f"Polydispersity for '{name}': 'vary' must be true or false.")
+
+    # Absent flags mean a file written before #90. Its numbers were chosen by
+    # whoever wrote it and must be reproduced exactly, so they read as explicit:
+    # a later type switch will not replace them with defaults.
+    flags = {}
+    for flag in ('pd_n_explicit', 'pd_nsigma_explicit'):
+        value = saved.get(flag, True)
+        if not isinstance(value, bool):
+            raise ValueError(f"Polydispersity for '{name}': '{flag}' must be true or false.")
+        flags[flag] = value
     return {
         'pd': width,
         'pd_n': int(saved['pd_n']),
         'pd_nsigma': nsigma,
         'pd_type': saved['pd_type'],
         'vary': saved['vary'],
+        **flags,
     }
 
 
@@ -1158,9 +1176,9 @@ class ParameterManager:
         Args:
             base_param: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
-            pd_n: Number of Gaussian quadrature points (default: 35)
-            pd_nsigma: Number of sigmas to include (default: 3.0)
-            pd_type: Distribution type ('gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann')
+            pd_n: Number of quadrature points (default depends on pd_type)
+            pd_nsigma: Number of sigmas to include (default depends on pd_type)
+            pd_type: Distribution type, one of ``PD_DISTRIBUTION_TYPES``
             vary: Whether to vary the pd_width during fitting
 
         Raises:
@@ -1397,6 +1415,9 @@ class ParameterManager:
         sf_cfg = _require_mapping(config, 'structure_factor', default={})
         backup_cfg = _require_mapping(sf_cfg, 'form_factor_backup', default={})
         new_backup = {name: _validated_param(name, saved) for name, saved in backup_cfg.items()}
+        # Validated before anything is committed, like every other section: a bad
+        # block inside the backup must not leave the manager half-assigned.
+        new_pd_backup = _validated_pd_backup(pd_cfg.get('backup'))
 
         # Followers always carry their target's value, whatever the file says.
         for follower, target in new_links.items():
@@ -1408,7 +1429,7 @@ class ParameterManager:
         self._links = new_links
         self._pd_manager.params = new_pd
         self._pd_manager.set_enabled(bool(pd_cfg.get('enabled', False)))
-        self._pd_manager.backup_state = _validated_pd_backup(pd_cfg.get('backup'))
+        self._pd_manager.backup_state = new_pd_backup
         self._sf_manager.backed_up_params = new_backup
 
     def clear(self) -> None:

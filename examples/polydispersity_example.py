@@ -13,7 +13,7 @@ which is common in real experimental systems where not all particles are
 exactly the same size.
 """
 
-from iquana import IQuana, PD_DEFAULTS, PD_DISTRIBUTION_TYPES
+from iquana import IQuana, PD_DEFAULTS, PD_DISTRIBUTION_TYPES, PD_TYPE_DEFAULTS
 
 # ============================================================================
 # Part 1: Checking Polydispersity Support
@@ -42,8 +42,9 @@ print(f"Polydisperse parameters: {pd_params}")
 # Show available distribution types
 print(f"\nAvailable distribution types: {PD_DISTRIBUTION_TYPES}")
 
-# Show default PD values
+# Show default PD values, and the quadrature each type switches to
 print(f"\nDefault PD values: {PD_DEFAULTS}")
+print(f"Per-type pd_n / pd_nsigma defaults: {PD_TYPE_DEFAULTS}")
 
 # ============================================================================
 # Part 2: Fitting WITHOUT Polydispersity (Baseline)
@@ -142,8 +143,9 @@ print("\n" + "=" * 80)
 print("Part 5: Using Different Distribution Types")
 print("=" * 80)
 
-# Lognormal distribution - often more realistic for particle sizes
-# as it prevents negative sizes and naturally skews toward smaller particles
+# Lognormal distribution - often more realistic for particle sizes:
+# it has no negative sizes and a long tail toward larger particles.
+# Switching to it also switches to its own quadrature (80 points over 8 sigma).
 fitter_lognorm = IQuana()
 fitter_lognorm.load_data('simulated_sans_data.csv')
 fitter_lognorm.set_model('sphere')
@@ -317,7 +319,9 @@ print("""
 ✓ Use set_pd_param() to configure pd_width, pd_type, pd_n, pd_nsigma, vary
 ✓ Use enable_polydispersity(True/False) to toggle PD globally
 ✓ PD values are preserved when toggling - no need to reconfigure
-✓ Available distribution types: gaussian, lognormal, schulz, rectangle, boltzmann
+✓ Available distribution types: gaussian, rectangle, uniform, lognormal, schulz,
+  boltzmann
+✓ Changing pd_type applies that type's pd_n / pd_nsigma defaults unless you set them
 ✓ pd_width is relative: 0.1 = 10% polydispersity
 ✓ Set vary=True on pd_param to fit the polydispersity width itself
 """)

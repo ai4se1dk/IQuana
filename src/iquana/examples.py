@@ -49,7 +49,7 @@ from sasmodels.direct_model import DirectModel
 
 from .data.loader import has_real_data, load_sans_data, normalize_sans_data, validate_q_grid
 from .fitter import IQuana
-from .modeling.polydispersity import PD_DEFAULTS
+from .modeling.polydispersity import PD_DEFAULTS, PD_TYPE_DEFAULTS
 
 __all__ = [
     'Example',
@@ -867,17 +867,21 @@ def _complete_polydispersity(params: dict[str, Any]) -> dict[str, Any]:
     sasmodels integrates over a distribution only when ``<param>_pd_n`` is set,
     so ``simulate('sphere', radius=50, radius_pd=0.2)`` would otherwise return
     silently monodisperse data — the width is accepted and then ignored. Supply
-    the same defaults the fitter uses (:data:`PD_DEFAULTS`) for any companion
-    key the caller did not set, so requesting polydispersity is enough to get
-    it.
+    the same defaults the fitter uses for any companion key the caller did not
+    set: :data:`PD_DEFAULTS` for the type, then that type's row of
+    :data:`PD_TYPE_DEFAULTS`, so ``radius_pd_type='lognormal'`` simulates with
+    the wider lognormal integration just as a fit would.
     """
     completed = dict(params)
     for key, value in params.items():
         if not key.endswith('_pd') or not value:
             continue
-        completed.setdefault(f'{key}_n', PD_DEFAULTS['pd_n'])
-        completed.setdefault(f'{key}_type', PD_DEFAULTS['pd_type'])
-        completed.setdefault(f'{key}_nsigma', PD_DEFAULTS['pd_nsigma'])
+        pd_type = completed.setdefault(f'{key}_type', PD_DEFAULTS['pd_type'])
+        type_defaults = PD_TYPE_DEFAULTS.get(pd_type, {})
+        for suffix, setting in (('_n', 'pd_n'), ('_nsigma', 'pd_nsigma')):
+            default = type_defaults.get(setting)
+            fallback = PD_DEFAULTS[setting] if default is None else default
+            completed.setdefault(f'{key}{suffix}', fallback)
     return completed
 
 

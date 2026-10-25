@@ -1,6 +1,16 @@
+"""Polydispersity configuration: distribution types, defaults and per-parameter state.
+
+This module is deliberately free of sasmodels. It owns what a polydispersity
+block *is*: its fields, the per-type quadrature defaults, and the rule for
+which settings a change of distribution type replaces.
+"""
+
+import math
 from typing import Any
 
-from ..console import NO, YES
+import numpy as np
+
+from ..console import NO, YES, logger
 
 PD_DEFAULTS = {
     'pd': 0.0,
@@ -10,11 +20,58 @@ PD_DEFAULTS = {
     'vary': False,
 }
 
-PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
+PD_DISTRIBUTION_TYPES = [
+    'gaussian',
+    'rectangle',
+    'uniform',
+    'lognormal',
+    'schulz',
+    'boltzmann',
+]
+
+#: Point count and span applied when the distribution type changes, for every
+#: setting the user has not chosen explicitly. The rows are sasmodels' own
+#: ``Dispersion.default`` values (``npts`` / ``nsigmas``); a test keeps them in
+#: step with the installed sasmodels. ``None`` means the type does not use the
+#: setting, so no default is written for it.
+PD_TYPE_DEFAULTS: dict[str, dict[str, int | float | None]] = {
+    'gaussian': {'pd_n': 35, 'pd_nsigma': 3.0},
+    'rectangle': {'pd_n': 35, 'pd_nsigma': 1.73205},
+    'uniform': {'pd_n': 35, 'pd_nsigma': None},
+    'lognormal': {'pd_n': 80, 'pd_nsigma': 8.0},
+    'schulz': {'pd_n': 80, 'pd_nsigma': 8.0},
+    'boltzmann': {'pd_n': 35, 'pd_nsigma': 3.0},
+}
+
+
+def default_block() -> dict[str, Any]:
+    """A fresh gaussian block whose quadrature settings are defaults, not choices."""
+    return {
+        'pd': PD_DEFAULTS['pd'],
+        'pd_n': PD_DEFAULTS['pd_n'],
+        'pd_nsigma': PD_DEFAULTS['pd_nsigma'],
+        'pd_type': PD_DEFAULTS['pd_type'],
+        'vary': PD_DEFAULTS['vary'],
+        'pd_n_explicit': False,
+        'pd_nsigma_explicit': False,
+    }
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, (int, np.integer)) and not isinstance(value, bool)
+
+
+def _is_real(value: Any) -> bool:
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
 
 
 class PolydispersityManager:
-    """Manage polydispersity configuration and backup/restore state."""
+    """Manage polydispersity configuration and backup/restore state.
+
+    Blocks are keyed by canonical sasmodels names. Each block holds the width,
+    the quadrature settings with flags recording whether the user chose them,
+    the distribution type and the vary flag.
+    """
 
     def __init__(self) -> None:
         self._param_names: list[str] = []
@@ -56,16 +113,7 @@ class PolydispersityManager:
 
     def initialize(self, param_names: list[str]) -> None:
         self._param_names = list(param_names)
-        self._params = {
-            param_name: {
-                'pd': PD_DEFAULTS['pd'],
-                'pd_n': PD_DEFAULTS['pd_n'],
-                'pd_nsigma': PD_DEFAULTS['pd_nsigma'],
-                'pd_type': PD_DEFAULTS['pd_type'],
-                'vary': PD_DEFAULTS['vary'],
-            }
-            for param_name in self._param_names
-        }
+        self._params = {param_name: default_block() for param_name in self._param_names}
         self._enabled = False
 
     def get_parameters(self) -> list[str]:
@@ -73,6 +121,14 @@ class PolydispersityManager:
 
     def has_parameters(self) -> bool:
         return len(self._param_names) > 0
+
+    def _require_known(self, base_param: str) -> None:
+        if base_param not in self._param_names:
+            available = ', '.join(self._param_names)
+            raise KeyError(
+                f"Parameter '{base_param}' does not support polydispersity. "
+                f'Available polydisperse parameters: {available}'
+            )
 
     def set_param(
         self,
@@ -82,45 +138,73 @@ class PolydispersityManager:
         pd_nsigma: float | None = None,
         pd_type: str | None = None,
         vary: bool | None = None,
-    ) -> None:
-        if base_param not in self._param_names:
-            available = ', '.join(self._param_names)
-            raise KeyError(
-                f"Parameter '{base_param}' does not support polydispersity. "
-                f'Available polydisperse parameters: {available}'
-            )
+    ) -> list[str]:
+        """Apply one configuration call atomically and return its log lines.
+
+        Every prospective value is computed into a copy of the block, and the
+        copy replaces the block only once every check has passed: a rejected
+        call leaves the block exactly as it was.
+
+        When the type changes, ``pd_n`` and ``pd_nsigma`` take the new type's
+        :data:`PD_TYPE_DEFAULTS` unless the user set them explicitly. Settings
+        passed in the same call are applied after that, so they always win,
+        and are recorded as explicit.
+        """
+        self._require_known(base_param)
 
         if pd_type is not None and pd_type not in PD_DISTRIBUTION_TYPES:
             raise ValueError(
                 f"Invalid pd_type '{pd_type}'. Valid types: {', '.join(PD_DISTRIBUTION_TYPES)}"
             )
-
-        if pd_width is not None and pd_width < 0:
-            raise ValueError('pd_width must be non-negative')
-        if pd_n is not None and pd_n <= 0:
-            raise ValueError('pd_n must be positive')
-        if pd_nsigma is not None and pd_nsigma <= 0:
+        if pd_width is not None and (
+            not _is_real(pd_width) or not math.isfinite(pd_width) or pd_width < 0
+        ):
+            raise ValueError('pd_width must be a non-negative finite number')
+        if pd_n is not None and (not _is_int(pd_n) or pd_n <= 0):
+            raise ValueError('pd_n must be a positive integer')
+        if pd_nsigma is not None and (
+            not _is_real(pd_nsigma) or not math.isfinite(pd_nsigma) or pd_nsigma <= 0
+        ):
             raise ValueError('pd_nsigma must be positive')
+        if vary is not None and not isinstance(vary, (bool, np.bool_)):
+            raise ValueError('vary must be True or False')
+
+        block = dict(self._params[base_param])
+        messages: list[str] = []
+
+        if pd_type is not None and pd_type != block['pd_type']:
+            block['pd_type'] = pd_type
+            applied = []
+            for key in ('pd_n', 'pd_nsigma'):
+                default = PD_TYPE_DEFAULTS[pd_type][key]
+                if default is None or block[f'{key}_explicit']:
+                    continue
+                if block[key] != default:
+                    applied.append(f'{key}={default:g}')
+                block[key] = default
+            if applied:
+                messages.append(
+                    f'{base_param}: {pd_type} defaults applied ({", ".join(applied)}). '
+                    'Pass pd_n / pd_nsigma to override.'
+                )
 
         if pd_width is not None:
-            self._params[base_param]['pd'] = pd_width
-        if pd_n is not None:
-            self._params[base_param]['pd_n'] = pd_n
-        if pd_nsigma is not None:
-            self._params[base_param]['pd_nsigma'] = pd_nsigma
-        if pd_type is not None:
-            self._params[base_param]['pd_type'] = pd_type
+            block['pd'] = float(pd_width)
+        for key, value in (('pd_n', pd_n), ('pd_nsigma', pd_nsigma)):
+            if value is None:
+                continue
+            block[key] = int(value) if key == 'pd_n' else float(value)
+            block[f'{key}_explicit'] = True
         if vary is not None:
-            self._params[base_param]['vary'] = vary
+            block['vary'] = bool(vary)
+
+        self._params[base_param] = block
+        for message in messages:
+            logger.info(message)
+        return messages
 
     def get_param(self, base_param: str) -> dict[str, Any]:
-        if base_param not in self._param_names:
-            available = ', '.join(self._param_names)
-            raise KeyError(
-                f"Parameter '{base_param}' does not support polydispersity. "
-                f'Available polydisperse parameters: {available}'
-            )
-
+        self._require_known(base_param)
         pd_config = self._params[base_param].copy()
         pd_config['active'] = pd_config['pd'] > 0
         return pd_config
@@ -178,9 +262,11 @@ class PolydispersityManager:
             pd_config = self._params[param_name]
             display_name = (name_map or {}).get(param_name, param_name)
             vary_str = YES if pd_config.get('vary', False) else NO
+            pd_type = pd_config['pd_type']
+            nsigma = 'n/a' if pd_type == 'uniform' else f'{pd_config["pd_nsigma"]:.4g}'
             print(
                 f'{display_name:<20} {pd_config["pd"]:<10.4g} {pd_config["pd_n"]:<10} '
-                f'{pd_config["pd_nsigma"]:<10.4g} {pd_config["pd_type"]:<12} {vary_str:<8}'
+                f'{nsigma:<10} {pd_type:<12} {vary_str:<8}'
             )
         print(f'{"=" * 90}\n')
 

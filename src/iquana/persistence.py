@@ -36,6 +36,7 @@ from .console import OK, logger
 from .data.provenance import DataSource, fingerprint_arrays
 from .data.resolution import ResolutionSetting
 from .fileio import atomic_write
+from .fitting.base import KERNEL_PRECISION
 from .report import json_safe
 from .results import FitArtifacts, FitResultContract, PosteriorDigest
 
@@ -43,14 +44,26 @@ SCHEMA_FORMAT = 'iquana-analysis'
 # Version 2 (#72 item 3) fills the 'weighting' key that version 1 reserved,
 # and records the weighting in each fit context. Version 1 documents read as
 # 'dI', the only weighting that existed when they were written.
-SCHEMA_VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+# Version 3 (#90) adds the 'uniform' distribution type and the pd_n_explicit /
+# pd_nsigma_explicit flags of each polydispersity block. Older documents read
+# with both flags true, so their numbers are reproduced exactly.
+SCHEMA_VERSION = 3
+SUPPORTED_VERSIONS = (1, 2, 3)
 
 #: The weighting every pre-weighting (0.4, schema 1) fit was made under.
 DEFAULT_WEIGHTING = {'mode': 'dI'}
 
 #: Relative tolerance for the reconstructed-chi-squared self-check.
-CHISQ_TOLERANCE = 1e-6
+#:
+#: The check exists to refuse a result whose numbers do not describe the saved
+#: configuration, which shows up as a gross mismatch. It must not refuse a file
+#: only because it is opened on another machine: the kernels are single precision
+#: and each platform compiles them itself, so the rebuilt chi-squared moves with
+#: the compiler. A hardsphere fit saved from a TinyCC-built kernel rebuilds 1.3e-6
+#: away on a kernel with fused multiply-adds (clang on Apple Silicon), which a
+#: fixed 1e-6 rejected. 100 times the kernel precision (~1.2e-5) leaves that
+#: margin and still refuses any real disagreement.
+CHISQ_TOLERANCE = 100 * KERNEL_PRECISION
 
 _POSITIVE_INFINITY = 'Infinity'
 _NEGATIVE_INFINITY = '-Infinity'
@@ -128,9 +141,53 @@ def decode_numbers(value: Any) -> Any:
     return value
 
 
+#: Fields schema 3 added to a polydispersity block that carry no engine-visible
+#: information. ``digest_view`` removes them, so a configuration that predates
+#: them hashes exactly as it did when its result was saved.
+_PD_BOOKKEEPING_FIELDS = ('pd_n_explicit', 'pd_nsigma_explicit')
+
+
+def _digest_pd_block(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return block
+    return {key: value for key, value in block.items() if key not in _PD_BOOKKEEPING_FIELDS}
+
+
+def digest_view(config: Any) -> Any:
+    """The configuration as the digest sees it. Never mutates *config*.
+
+    Exactly the schema-3 additions that do not change what is evaluated are
+    projected away: the two explicitness flags of every polydispersity block,
+    in the live blocks and in those of the pre-structure-factor backup.
+
+    This is deliberately not a general "hash what the engine sees" view:
+    bounds, vary flags and links have always been in the digest, and removing
+    any field that old files hashed would detach their results.
+    """
+    if not isinstance(config, dict) or not isinstance(config.get('polydispersity'), dict):
+        return config
+    pd_section = dict(config['polydispersity'])
+    if isinstance(pd_section.get('params'), dict):
+        pd_section['params'] = {
+            name: _digest_pd_block(block) for name, block in pd_section['params'].items()
+        }
+    backup = pd_section.get('backup')
+    if isinstance(backup, dict) and isinstance(backup.get('polydisperse_params'), dict):
+        pd_section['backup'] = {
+            **backup,
+            'polydisperse_params': {
+                name: _digest_pd_block(block)
+                for name, block in backup['polydisperse_params'].items()
+            },
+        }
+    return {**config, 'polydispersity': pd_section}
+
+
 def config_digest(config: dict[str, Any]) -> str:
     """A stable hash of a manager configuration, for staleness comparison."""
-    canonical = json.dumps(encode_numbers(config), sort_keys=True, separators=(',', ':'))
+    canonical = json.dumps(
+        encode_numbers(digest_view(config)), sort_keys=True, separators=(',', ':')
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
