@@ -990,7 +990,7 @@ For `lognormal`, the relative spread of x itself is √(exp(pd²) − 1), slight
 more than `pd`. All of these describe the ideal continuous distribution.
 Truncation at `pd_nsigma`, the model's own limits (a radius cannot be
 negative) and the discrete quadrature all shift the moments that are actually
-integrated.
+integrated, which is what `plot_distribution()` shows.
 
 ```python
 # Use Schulz distribution for polymer samples
@@ -1012,8 +1012,30 @@ through `save_analysis()` / `load_analysis()`. `get_pd_param()` reports which
 settings you chose in `pd_n_explicit` and `pd_nsigma_explicit`. An analysis
 saved before this behaviour existed loads with its numbers marked as chosen, so
 it reproduces exactly. The defaults are the sasmodels defaults, not a
-convergence guarantee: for a very wide distribution, check that `pd_nsigma`
-covers the tail.
+convergence guarantee: for a very wide distribution, check with
+`plot_distribution()` that the tail is covered.
+
+#### Seeing the distribution
+
+`plot_distribution()` draws the points and weights the fit integrates over,
+and `get_pd_weights()` returns them:
+
+```python
+fitter.set_pd_param('radius', pd_width=0.15, pd_type='lognormal')
+fitter.plot_distribution('radius')        # skewed, long tail to large radii
+
+fitter.set_pd_param('radius', pd_type='gaussian')
+fitter.plot_distribution('radius')        # symmetric about the radius
+
+values, weights = fitter.get_pd_weights('radius')
+```
+
+Each marker is one quadrature point; the dashed line marks the parameter value.
+The plot shows the distribution as the fit uses it right now: at the current
+parameter value, and as a single point when polydispersity is disabled or the
+width is zero. The weights are per-point masses that sum to one, not a
+probability density, and they are the size weights only: the scattering kernel
+weights each size by its volume on top of them.
 
 ### Enabling/Disabling Polydispersity
 

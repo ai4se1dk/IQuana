@@ -323,6 +323,30 @@ class DatasetHandle:
             config['active'] = resolved > 0
         return config
 
+    def _graph_dispersion(self, param_name: str) -> tuple[Any, dict[str, Any]]:
+        """This dataset's effective distribution at the graph-resolved center and width."""
+        center, width = self._parent._graph_center_and_width(self._name, param_name)
+        return self._fitter._effective_dispersion(param_name, center=center, width=width)
+
+    def get_pd_weights(self, param_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """The distribution the joint fit integrates over for one parameter.
+
+        As :meth:`IQuana.get_pd_weights`, but at the parameter value and width
+        the constraint graph resolves: a radius constrained to another
+        dataset's, or a width shared with one, is shown as it will be fitted.
+        """
+        effective, _config = self._graph_dispersion(param_name)
+        return np.array(effective.values, copy=True), np.array(effective.weights, copy=True)
+
+    def plot_distribution(self, param_name: str, show: bool | None = None) -> Figure:
+        """Plot :meth:`get_pd_weights`. Same display convention as plot_results()."""
+        from . import plotting
+
+        effective, config = self._graph_dispersion(param_name)
+        return plotting.plot_pd_weights(
+            effective, name=f'{self._name}.{param_name}', pd_config=config, show=show
+        )
+
     def get_pd_params(self) -> None:
         """Print this dataset's polydispersity table."""
         self._fitter.get_pd_params()
@@ -1842,6 +1866,22 @@ class MultiFitter:
             **entry.fitter._param_manager.get_canonical_param_values(),
             **self._overrides(entry, resolved),
         }
+
+    def _graph_center_and_width(
+        self, dataset: str, param_name: str
+    ) -> tuple[float | None, float | None]:
+        """The graph-resolved value and width of one dataset's polydisperse parameter.
+
+        None for either when the graph does not supply it, so the caller falls
+        back to the dataset's own configuration.
+        """
+        entry = self._entry(dataset)
+        manager = entry.fitter._param_manager
+        manager.get_pd_param(param_name)  # KeyError naming the valid parameters
+        resolved = self._resolved_values()
+        center = self._canonical_values(entry, resolved).get(manager._resolve_canonical(param_name))
+        width = resolved.get(ParameterRef(dataset, manager.resolve_name(param_name), pd=True))
+        return center, width
 
     def _evaluate_entry(
         self, entry: _Entry, target: Any, resolved: Mapping[ParameterRef, float]

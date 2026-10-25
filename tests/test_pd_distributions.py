@@ -1,10 +1,14 @@
-"""Polydispersity completeness (#90): the uniform distribution and
-distribution-aware defaults for ``pd_n`` / ``pd_nsigma``.
+"""Polydispersity completeness (#90): the uniform distribution,
+distribution-aware defaults for ``pd_n`` / ``pd_nsigma``, effective weights and
+plot_distribution().
 """
 
 import copy
+import math
+from unittest.mock import patch
 
 import numpy as np
+import plotly.graph_objects as go
 import pytest
 from sasmodels import weights as sas_weights
 from sasmodels.core import load_model
@@ -186,3 +190,83 @@ def test_the_simulator_uses_the_per_type_defaults():
     )
     np.testing.assert_allclose(simulated.y, expected, rtol=1e-6)
     assert simulated.truth['radius_pd_n'] == 80
+
+
+# =========================================================================
+# get_pd_weights and plot_distribution (90-DESIGN.md §8)
+# =========================================================================
+
+
+class TestDistributionPlot:
+    @pytest.mark.parametrize('pd_type', PD_DISTRIBUTION_TYPES)
+    def test_the_plot_shows_sasmodels_weights(self, data, pd_type):
+        fitter = sphere_fitter(data)
+        fitter.set_pd_param('radius', pd_width=0.15, pd_type=pd_type)
+        fitter.enable_polydispersity(True)
+        config = fitter.get_pd_param('radius')
+        expected = sas_weights.get_weights(
+            pd_type, config['pd_n'], 0.15, config['pd_nsigma'], 50.0, (0.0, math.inf), True
+        )
+        figure = fitter.plot_distribution('radius', show=False)
+        np.testing.assert_array_equal(figure.data[0].x, expected[0])
+        np.testing.assert_array_equal(figure.data[0].y, expected[1])
+        np.testing.assert_array_equal(fitter.get_pd_weights('radius')[0], expected[0])
+        assert pd_type in figure.layout.title.text
+        assert ('nσ' in figure.layout.title.text) == (pd_type != 'uniform')
+        assert figure.layout.xaxis.title.text == 'radius (Å)'
+
+    def test_disabled_polydispersity_plots_one_point_at_the_value(self, data):
+        fitter = sphere_fitter(data)
+        fitter.set_pd_param('radius', pd_width=0.2, pd_type='lognormal')
+        fitter.enable_polydispersity(False)
+        figure = fitter.plot_distribution('radius', show=False)
+        assert list(figure.data[0].x) == [50.0]
+        assert figure.layout.title.text.endswith('polydispersity disabled')
+        assert 'the fit uses the single value' in figure.layout.annotations[-1].text
+
+    def test_the_center_follows_the_current_value(self, data):
+        fitter = sphere_fitter(data)
+        fitter.set_pd_param('radius', pd_width=0.1)
+        fitter.enable_polydispersity(True)
+        fitter.set_param('radius', value=77.0)
+        figure = fitter.plot_distribution('radius', show=False)
+        assert figure.layout.shapes[0].x0 == 77.0
+        assert np.average(figure.data[0].x, weights=figure.data[0].y) == pytest.approx(77.0)
+
+    @pytest.mark.parametrize(
+        'settings, note',
+        [
+            ({'pd_width': 0.0}, 'monodisperse (pd = 0)'),
+            ({'pd_width': 0.2, 'pd_n': 1}, 'monodisperse (pd_n = 1)'),
+        ],
+    )
+    def test_single_point_annotations_say_why(self, data, settings, note):
+        fitter = sphere_fitter(data)
+        fitter.set_pd_param('radius', **settings)
+        fitter.enable_polydispersity(True)
+        figure = fitter.plot_distribution('radius', show=False)
+        assert list(figure.data[0].x) == [50.0]
+        assert figure.layout.annotations[-1].text == note
+
+    def test_returned_arrays_are_copies(self, data):
+        fitter = sphere_fitter(data)
+        fitter.set_pd_param('radius', pd_width=0.1)
+        fitter.enable_polydispersity(True)
+        values, weights = fitter.get_pd_weights('radius')
+        values[:] = 0.0
+        weights[:] = 0.0
+        assert fitter.get_pd_weights('radius')[1].sum() == pytest.approx(1.0)
+
+    def test_show_follows_the_display_convention(self, data):
+        fitter = sphere_fitter(data)
+        with patch.object(go.Figure, 'show') as shown:
+            fitter.plot_distribution('radius', show=False)
+            shown.assert_not_called()
+            figure = fitter.plot_distribution('radius', show=True)
+            shown.assert_called_once()
+        assert isinstance(figure, go.Figure)
+
+    def test_a_parameter_without_polydispersity_is_refused(self, data):
+        fitter = sphere_fitter(data)
+        with pytest.raises(KeyError, match='does not support polydispersity'):
+            fitter.plot_distribution('sld', show=False)
