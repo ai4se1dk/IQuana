@@ -19,7 +19,6 @@ from plotly.graph_objects import Figure
 # SasModels and SasData imports
 from sasmodels import core
 from sasmodels.core import load_model
-from sasmodels.direct_model import DirectModel
 
 from . import plotting
 from .console import ARROW, CHI_SQUARED, INVERSE_ANGSTROM, OK, SIGMA, logger
@@ -43,8 +42,14 @@ from .fitting import (
     fit_bumps_dream,
     fit_scipy,
 )
-from .fitting.base import at_bound, extract_fit_index, pd_is_active, reduced_chisq
-from .fitting.dispersion import find_parameter, resolve_dispersion
+from .fitting.base import at_bound, extract_fit_index, reduced_chisq
+from .fitting.dispersion import (
+    IQuanaDirectModel,
+    array_dispersions,
+    find_parameter,
+    fit_state_arrays,
+    resolve_dispersion,
+)
 from .fitting.theory import (
     build_model_parameters,
     evaluate_theory,
@@ -53,6 +58,7 @@ from .fitting.theory import (
     theory_data,
 )
 from .modeling.parameters import ParameterManager
+from .modeling.polydispersity import pd_block, pd_is_active
 from .modeling.structure_factor import validate_radius_effective_mode
 from .persistence import build_fit_context, read_analysis, write_analysis
 from .plotting import DEFAULT_POSTERIOR_PREDICTIVE_DRAWS, format_reduced_chisq, plot_fit
@@ -891,6 +897,9 @@ class IQuana:
         # desynchronized state in which the next fit silently evaluates the
         # product kernel with default structure-factor parameters.
         validate_radius_effective_mode(radius_effective_mode)
+        # update_for_product_model checks this again for its other callers; here
+        # it fails before the product kernel is compiled.
+        self._param_manager.require_link_radius_allowed(radius_effective_mode)
 
         # Create product model name
         full_model_name = f'{self.model_name}@{structure_factor_name}'
@@ -986,6 +995,7 @@ class IQuana:
         pd_nsigma: float | None = None,
         pd_type: str | None = None,
         vary: bool | None = None,
+        pd_array: Any = None,
     ) -> None:
         """
         Configure polydispersity for a parameter.
@@ -998,6 +1008,14 @@ class IQuana:
         set them yourself. Values you pass always win, now and after any later
         type change, and survive save/load.
 
+        **Array distributions.** ``pd_type='array'`` with ``pd_array=`` uses an
+        empirical distribution. Its values are absolute parameter values in the
+        parameter's own units (Angstrom for a radius), not offsets from the
+        parameter value. The parameter then becomes a fixed constant: neither
+        its value nor a width can be fitted, and it cannot be linked or shared.
+        Points outside the model's limits (a negative radius) are dropped and
+        reported.
+
         Args:
             param_name: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
@@ -1005,12 +1023,18 @@ class IQuana:
             pd_nsigma: Number of sigmas to include (default depends on pd_type)
             pd_type: Distribution type, one of ``PD_DISTRIBUTION_TYPES``:
                 'gaussian', 'rectangle', 'uniform', 'lognormal', 'schulz',
-                'boltzmann'
+                'boltzmann', 'array'
             vary: Whether to vary the pd_width during fitting
+            pd_array: For ``pd_type='array'``: a text file whose first two
+                columns are values and weights, a ``(values, weights)`` pair,
+                or an (N, 2) numpy array of ``(value, weight)`` rows. Weights
+                are normalised to sum to one.
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
-            ValueError: If a setting is invalid
+            ValueError: If a setting is invalid; if ``vary=True`` is asked of an
+                array distribution; or if an array is requested for a parameter
+                that is linked or shared.
         """
         self._param_manager.set_pd_param(
             param_name,
@@ -1019,6 +1043,7 @@ class IQuana:
             pd_nsigma=pd_nsigma,
             pd_type=pd_type,
             vary=vary,
+            pd_array=pd_array,
         )
 
     def get_pd_param(self, param_name: str) -> dict[str, Any]:
@@ -1030,10 +1055,13 @@ class IQuana:
 
         Returns:
             Dictionary with pd, pd_n, pd_nsigma, pd_type, vary, pd_n_explicit,
-            pd_nsigma_explicit and active. The two ``_explicit`` flags say
-            whether ``pd_n`` / ``pd_nsigma`` were chosen by you or are the
-            distribution's defaults. 'active' indicates whether
-            polydispersity is active for this parameter (pd > 0).
+            pd_nsigma_explicit, pd_array and active. The two ``_explicit``
+            flags say whether ``pd_n`` / ``pd_nsigma`` were chosen by you or
+            are the distribution's defaults. ``pd_array`` is None, or for an
+            array distribution a dict of copies of ``values`` and ``weights``
+            plus the ``source`` file. ``active`` says whether the distribution
+            takes part in evaluation (an array always does; otherwise pd > 0
+            or a varying width).
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
@@ -1080,8 +1108,10 @@ class IQuana:
         The distribution a fit integrates over for one parameter, right now.
 
         These are the per-parameter quadrature points and weights handed to
-        the sasmodels kernel at the current parameter value, computed by
-        sasmodels' own ``weights.get_weights``. Weights sum to one. With
+        the sasmodels kernel at the current parameter value: computed by
+        sasmodels' own ``weights.get_weights`` for the analytic types, and
+        taken from the stored distribution for ``'array'`` after dropping
+        points outside the model's limits. Weights sum to one. With
         polydispersity disabled, or a zero width, this is a single point at the
         parameter value, because that is what the fit uses.
 
@@ -1097,7 +1127,8 @@ class IQuana:
 
         Raises:
             KeyError: If param_name is not a polydisperse parameter
-            ValueError: If no model is set.
+            ValueError: If no model is set, or an array distribution has no
+                point inside the model's limits.
         """
         effective, _config = self._effective_dispersion(param_name)
         return np.array(effective.values, copy=True), np.array(effective.weights, copy=True)
@@ -1362,15 +1393,27 @@ class IQuana:
                 label = moniker
 
             part_kernel = load_model(part_name, dtype='single', platform='dll')
+
+            # This component's active PD blocks under the part's own names.
+            prefix_marker = f'{prefix}_'
+            part_pd = {
+                base_param[len(prefix_marker) :]: pd_config
+                for base_param, pd_config in pd_settings.items()
+                if base_param.startswith(prefix_marker)
+            }
+
             # Evaluated through the same resolution as the fit: otherwise a
             # slit or custom-pinhole fit would overlay sharp component curves
             # under a smeared total.
-            calculator = DirectModel(evaluation_data, part_kernel)
+            calculator = IQuanaDirectModel(
+                evaluation_data,
+                part_kernel,
+                arrays=array_dispersions(part_pd, True, part_kernel.info),
+            )
 
             # Map fitted values by stripping the component prefix; fold in
             # active PD settings the same way the posterior evaluator does.
             part_pars: dict[str, Any] = {}
-            prefix_marker = f'{prefix}_'
             for canonical, value in canonical_values.items():
                 if canonical.startswith(prefix_marker):
                     stripped = canonical[len(prefix_marker) :]
@@ -1380,13 +1423,8 @@ class IQuana:
             part_scale = canonical_values.get(f'{prefix}_scale', 1.0)
             part_pars['scale'] = part_scale
             part_pars['background'] = 0.0
-            for base_param, pd_config in pd_settings.items():
-                if base_param.startswith(prefix_marker):
-                    stripped = base_param[len(prefix_marker) :]
-                    part_pars[f'{stripped}_pd'] = pd_config['pd']
-                    part_pars[f'{stripped}_pd_n'] = pd_config['pd_n']
-                    part_pars[f'{stripped}_pd_nsigma'] = pd_config['pd_nsigma']
-                    part_pars[f'{stripped}_pd_type'] = pd_config['pd_type']
+            for stripped, pd_config in part_pd.items():
+                part_pars.update(pd_block(stripped, pd_config))
 
             curves[label] = global_scale * np.asarray(calculator(**part_pars))
 
@@ -1467,7 +1505,8 @@ class IQuana:
         # Re-evaluating legacy lmfit runtime state: use the same evaluation
         # copy the fit itself used, or the re-plotted/saved curve would be
         # unsmeared while the fit was smeared.
-        calculator = DirectModel(self._evaluation_data(warn=False), self.kernel)
+        # No PD blocks or arrays here: this legacy dict never carried them.
+        calculator = IQuanaDirectModel(self._evaluation_data(warn=False), self.kernel)
         par_dict = {name: info['value'] for name, info in self.fit_result['parameters'].items()}
         fit_index = extract_fit_index(calculator)
         resolved_index = resolve_fit_index(fit_index, len(self.data.x))
@@ -1953,8 +1992,10 @@ class IQuana:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate the model on *data* at the current parameters (+ overrides)."""
         self._require_model()
-        pars = build_model_parameters(self._param_manager.snapshot_fit_state(), overrides)
-        return evaluate_theory(data, self.kernel, pars)
+        fit_state = self._param_manager.snapshot_fit_state()
+        pars = build_model_parameters(fit_state, overrides)
+        arrays = fit_state_arrays(fit_state, self.kernel.info)
+        return evaluate_theory(data, self.kernel, pars, arrays)
 
     def calculate(self, q: np.ndarray | None = None, dq: float | None = None) -> np.ndarray:
         """

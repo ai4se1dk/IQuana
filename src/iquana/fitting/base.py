@@ -22,11 +22,6 @@ BOUND_RTOL = 1e-4
 KERNEL_PRECISION = float(np.finfo(np.float32).eps)
 
 
-def pd_is_active(pd_config: dict[str, Any]) -> bool:
-    """Return whether a PD configuration should be included in model evaluation."""
-    return pd_config['pd'] > 0 or pd_config.get('vary', False)
-
-
 def normalize_message(text: Any) -> str:
     """Collapse an optimizer message to a single line of single-spaced text.
 

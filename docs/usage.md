@@ -963,7 +963,7 @@ fitter.set_pd_param(
 pd_config = fitter.get_pd_param('radius')
 print(pd_config)
 # {'pd': 0.15, 'pd_n': 50, 'pd_nsigma': 4.0, 'pd_type': 'gaussian', 'vary': True,
-#  'pd_n_explicit': True, 'pd_nsigma_explicit': True, 'active': True}
+#  'pd_n_explicit': True, 'pd_nsigma_explicit': True, 'pd_array': None, 'active': True}
 ```
 
 One `set_pd_param()` call is applied as a unit: if any part of it is rejected,
@@ -971,7 +971,7 @@ nothing changes.
 
 ### Distribution Types
 
-Six distribution types are available, as `PD_DISTRIBUTION_TYPES`. The table
+Seven distribution types are available, as `PD_DISTRIBUTION_TYPES`. The table
 describes each one the way sasmodels computes it, which is what the fit
 integrates. For a size parameter, σ = `pd` × the parameter value.
 
@@ -983,6 +983,7 @@ integrates. For a size parameter, σ = `pd` × the parameter value.
 | `lognormal` | exp(−(ln x − ln c)²/2 pd²) / (x·pd) | **standard deviation of ln x**; c is the median, not the mean | 80 | 8 |
 | `schulz` | Schulz–Zimm with z = (c/σ)² | standard deviation / value | 80 | 8 |
 | `boltzmann` | exp(−\|x−c\|/σ) | **decay length** / value; the standard deviation is √2 σ | 35 | 3 |
+| `array` | your own points and weights | not used | one per point | not used |
 
 `rectangle` and `uniform` are both flat, but the same `pd` means different
 boxes: 0.1 is a ±17.3 % box for `rectangle` and a ±10 % box for `uniform`.
@@ -1015,6 +1016,41 @@ it reproduces exactly. The defaults are the sasmodels defaults, not a
 convergence guarantee: for a very wide distribution, check with
 `plot_distribution()` that the tail is covered.
 
+#### Empirical (array) distributions
+
+`pd_type='array'` uses a measured or simulated distribution instead of an
+analytic shape:
+
+```python
+# Two columns, values then weights; '#' starts a comment; spaces or commas
+fitter.set_pd_param('radius', pd_type='array', pd_array='radius_dist.txt')
+
+# In memory: a (values, weights) pair, or an (N, 2) numpy array of rows
+fitter.set_pd_param('radius', pd_type='array', pd_array=(values, weights))
+fitter.set_pd_param('radius', pd_type='array', pd_array=np.column_stack([values, weights]))
+```
+
+- **The values are absolute**, in the parameter's own units (Å for a radius).
+  They are not offsets from the parameter value, and they do not move when the
+  parameter value changes.
+- **Weights are normalised** to sum to one. Values are sorted, and each value
+  may appear only once.
+- **Points outside the model's limits are dropped**, for example a negative
+  radius, and the log says how much weight that removed. If nothing is left,
+  the call is refused. These limits are the model's physical ones, not the
+  `min`/`max` you set for fitting.
+- **The parameter becomes a fixed constant.** Its value does not enter the
+  model while polydispersity is enabled, so it cannot be fitted, and an array
+  has no width to fit either. It also cannot take part in a link, a shared
+  component parameter (`set_models(shared=...)`), or
+  `radius_effective_mode='link_radius'`; `set_structure_factor(...,
+  radius_effective_mode='unconstrained')` works. These rules hold while
+  polydispersity is disabled too, when the parameter evaluates at its single
+  value like any other.
+- **The distribution is saved with the analysis.** `save_analysis()` stores
+  the values and weights inline; the file path is kept only as a note of where
+  they came from.
+
 #### Seeing the distribution
 
 `plot_distribution()` draws the points and weights the fit integrates over,
@@ -1032,10 +1068,24 @@ values, weights = fitter.get_pd_weights('radius')
 
 Each marker is one quadrature point; the dashed line marks the parameter value.
 The plot shows the distribution as the fit uses it right now: at the current
-parameter value, and as a single point when polydispersity is disabled or the
-width is zero. The weights are per-point masses that sum to one, not a
-probability density, and they are the size weights only: the scattering kernel
-weights each size by its volume on top of them.
+parameter value, after points outside the model's limits are dropped, and as a
+single point when polydispersity is disabled or the width is zero. The weights
+are per-point masses that sum to one, not a probability density, and they are
+the size weights only: the scattering kernel weights each size by its volume on
+top of them.
+
+#### Cost and cutoff
+
+Every combination of quadrature points across the polydisperse parameters is
+one kernel evaluation, so two parameters with 80 points each cost 6400
+evaluations per Q value. sasmodels also skips any combination whose product of
+weights is not above 1e-5. With several dense distributions every combination
+can fall below that, for example two 400-point arrays with equal weights
+(1/160000 each). When an array distribution is involved, IQuana refuses such
+a configuration at evaluation instead of returning zero intensity; use fewer
+points. Models with only analytic distributions are evaluated by sasmodels
+unchanged, so keep `pd_n` moderate when several parameters are dispersed. An
+array with more than 1000 points is accepted with a warning about speed.
 
 ### Enabling/Disabling Polydispersity
 
