@@ -6,6 +6,7 @@ import numpy as np
 from ..console import logger
 from ..results import FitArtifacts, FitResultContract, ParameterStateSnapshot
 from .base import (
+    KERNEL_PRECISION,
     EngineFitOutput,
     apply_parameter_links,
     build_result_parameters,
@@ -25,10 +26,6 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
-# Relative accuracy of the model curve. IQuana compiles sasmodels kernels
-# in single precision (``load_model(..., dtype='single')``), so two evaluations
-# agree to about 1e-7 and no further.
-KERNEL_PRECISION = float(np.finfo(np.float32).eps)
 # Forward-difference step for the numerical Jacobian, as a fraction of each
 # parameter. scipy defaults to sqrt(double eps) ~= 1.5e-8, which is *below* the
 # kernel's own resolution: the perturbed curve comes back bit-identical, the

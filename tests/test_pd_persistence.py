@@ -14,12 +14,22 @@ import copy
 import glob
 import json
 import os
+import platform
+import shutil
+import subprocess
+import sys
 
 import numpy as np
 import pytest
 
 from iquana import IQuana, examples, persistence
-from iquana.persistence import SCHEMA_VERSION, AnalysisFileError, config_digest, digest_view
+from iquana.persistence import (
+    CHISQ_TOLERANCE,
+    SCHEMA_VERSION,
+    AnalysisFileError,
+    config_digest,
+    digest_view,
+)
 
 from .test_persistence import EXAMPLE_DATA, attach_synthetic_fit
 
@@ -107,6 +117,129 @@ def test_the_backup_is_projected_too():
     assert config['polydispersity']['backup'] is not None
     assert 'pd_n_explicit' in config['polydispersity']['backup']['polydisperse_params']['radius']
     assert fitter._fit_contract is not None
+
+
+# =========================================================================
+# Files opened on another machine
+#
+# The fixtures were written by kernels TinyCC compiled on Windows. Every
+# platform compiles the single-precision kernels itself, so the chi-squared a
+# loaded file rebuilds moves with the compiler. clang on Apple Silicon fuses
+# multiply-adds, which moved the hardsphere fixture by 1.3e-6 and, under the old
+# fixed 1e-6 tolerance, silently detached its result on macOS only.
+# =========================================================================
+
+#: The drift measured for structure_factor_backup.json on FMA-built kernels.
+MEASURED_FMA_DRIFT = 1.3e-6
+
+
+def load_with_saved_chisq_scaled(fixture, tmp_path, factor):
+    document = load_json(fixture)
+    document['result']['chisq'] *= factor
+    path = tmp_path / os.path.basename(fixture)
+    dump_json(path, document)
+    return IQuana.load_analysis(str(path), data=EXAMPLE_DATA)
+
+
+@pytest.mark.parametrize('fixture', FIXTURES, ids=os.path.basename)
+def test_compiler_sized_drift_keeps_the_result(fixture, tmp_path):
+    # Four times the measured drift, so the tolerance keeps a margin over it.
+    fitter = load_with_saved_chisq_scaled(fixture, tmp_path, 1 + 4 * MEASURED_FMA_DRIFT)
+    assert fitter._fit_contract is not None
+
+
+@pytest.mark.parametrize('fixture', FIXTURES, ids=os.path.basename)
+def test_a_real_chisq_mismatch_still_detaches_the_result(fixture, tmp_path):
+    # The self-check must still refuse numbers that do not describe the file.
+    fitter = load_with_saved_chisq_scaled(fixture, tmp_path, 1 + 1e-3)
+    assert fitter._fit_contract is None
+
+
+def test_the_tolerance_sits_between_rounding_and_disagreement():
+    assert 4 * MEASURED_FMA_DRIFT < CHISQ_TOLERANCE < 1e-4
+
+
+#: Run in a fresh interpreter: sasmodels reads its compiler settings at import.
+_REBUILD_SCRIPT = r"""
+import json, sys
+import numpy as np
+from sasmodels.core import load_model
+from iquana import IQuana
+from iquana.persistence import _rebuild_residuals
+try:
+    load_model('sphere@hardsphere', dtype='single', platform='dll')
+except Exception as error:  # these compiler flags cannot build a kernel here
+    print(json.dumps({'compile_error': repr(error)}))
+    sys.exit(0)
+report = {}
+for path in sys.argv[1:]:
+    with open(path, encoding='utf-8') as handle:
+        document = json.load(handle)
+    fitter = IQuana.load_analysis(path)
+    data = fitter._evaluation_data(warn=False)
+    curve, index = fitter._evaluate(data)
+    residuals = _rebuild_residuals(data, curve, index, document['result']['engine'])
+    saved = document['result']['chisq']
+    report[path] = {
+        'attached': fitter._fit_contract is not None,
+        'drift': abs(float(np.sum(residuals**2)) - saved) / saved,
+    }
+print(json.dumps(report))
+"""
+
+
+def _fma_compiler():
+    """A C compiler and flags that build sasmodels kernels with fused multiply-adds."""
+    # The bare name, not shutil.which's path: sasmodels splits CC with POSIX
+    # shell rules, which strip the backslashes out of a Windows path.
+    compiler = next((name for name in ('cc', 'gcc', 'clang') if shutil.which(name)), None)
+    if compiler is None:
+        return None
+    machine = platform.machine().lower()
+    if machine in ('arm64', 'aarch64'):
+        return compiler, '-std=c99 -O2 -ffp-contract=fast'  # FMA is always present
+    if machine in ('x86_64', 'amd64'):
+        try:
+            from numpy._core._multiarray_umath import __cpu_features__
+        except ImportError:
+            return None
+        if not __cpu_features__.get('FMA3'):
+            return None  # -mfma would build a kernel this CPU cannot run
+        return compiler, '-std=c99 -O2 -mfma -ffp-contract=fast'
+    return None
+
+
+def test_files_keep_their_results_on_fma_built_kernels(tmp_path):
+    """The macOS failure, reproduced on any machine with a C compiler and FMA."""
+    found = _fma_compiler()
+    if found is None:
+        pytest.skip('no C compiler with fused multiply-add support on this machine')
+    compiler, flags = found
+    env = {
+        **os.environ,
+        'SAS_COMPILER': 'unix',
+        'CC': compiler,
+        'CFLAGS': flags,
+        'SAS_DLL_PATH': str(tmp_path / 'kernels'),  # never reuse a cached kernel
+    }
+    completed = subprocess.run(
+        [sys.executable, '-c', _REBUILD_SCRIPT, *FIXTURES],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=True,
+    )
+    report = json.loads(completed.stdout.strip().splitlines()[-1])
+    if 'compile_error' in report:
+        pytest.skip(f'{compiler} {flags} cannot build the kernels: {report["compile_error"]}')
+    if not any(entry['drift'] > 0 for entry in report.values()):
+        pytest.skip('these kernels round exactly like the ones that wrote the fixtures')
+
+    detached = {
+        os.path.basename(path): entry for path, entry in report.items() if not entry['attached']
+    }
+    assert not detached, f'results detached on FMA-built kernels: {detached}'
 
 
 # =========================================================================

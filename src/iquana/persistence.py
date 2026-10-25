@@ -37,6 +37,7 @@ from .console import OK, logger
 from .data.provenance import DataSource, fingerprint_arrays
 from .data.resolution import ResolutionSetting
 from .fileio import atomic_write
+from .fitting.base import KERNEL_PRECISION
 from .report import json_safe
 from .results import FitArtifacts, FitResultContract, PosteriorDigest
 
@@ -55,7 +56,16 @@ SUPPORTED_VERSIONS = (1, 2, 3)
 DEFAULT_WEIGHTING = {'mode': 'dI'}
 
 #: Relative tolerance for the reconstructed-chi-squared self-check.
-CHISQ_TOLERANCE = 1e-6
+#:
+#: The check exists to refuse a result whose numbers do not describe the saved
+#: configuration, which shows up as a gross mismatch. It must not refuse a file
+#: only because it is opened on another machine: the kernels are single precision
+#: and each platform compiles them itself, so the rebuilt chi-squared moves with
+#: the compiler. A hardsphere fit saved from a TinyCC-built kernel rebuilds 1.3e-6
+#: away on a kernel with fused multiply-adds (clang on Apple Silicon), which a
+#: fixed 1e-6 rejected. 100 times the kernel precision (~1.2e-5) leaves that
+#: margin and still refuses any real disagreement.
+CHISQ_TOLERANCE = 100 * KERNEL_PRECISION
 
 _POSITIVE_INFINITY = 'Infinity'
 _NEGATIVE_INFINITY = '-Infinity'
