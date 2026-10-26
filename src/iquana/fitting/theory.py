@@ -1,6 +1,5 @@
 """Model evaluation without fitting: the theory preview's building blocks."""
 
-import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -79,12 +78,6 @@ def evaluate_theory(data: Any, kernel: Any, pars: dict[str, Any]) -> tuple[np.nd
     Returns the float64 curve and the boolean fit index. The dataset's own
     resolution columns are applied, exactly as during a fit.
     """
-    if data.y is not None and data.dy is None:
-        # DirectModel indexes dy whenever y is present. Evaluate on a shallow
-        # copy so the caller's dataset keeps its missing dI.
-        data = copy.copy(data)
-        data.dy = np.zeros_like(np.asarray(data.y, dtype=float))
-
     calculator = DirectModel(data, kernel)
     curve = np.asarray(calculator(**pars), dtype=float)
     return curve, resolve_fit_index(extract_fit_index(calculator), len(data.x))
