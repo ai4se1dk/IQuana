@@ -1425,8 +1425,14 @@ class IQuana:
             Changed in 0.4: ``chisq`` from the bumps engine used to be
             χ²/dof. Use ``reduced_chisq`` for that value.
 
+            Changed in 0.5: the LMFit default method is ``'least_squares'``
+            (it was ``'leastsq'``, which ignores bounds), and a varying
+            parameter that starts outside its bounds is refused before the
+            fit.
+
         Raises:
-            ValueError: If data or model not loaded, or invalid engine
+            ValueError: If data or model not loaded, invalid engine, or a
+                varying parameter starts outside its bounds
             NotImplementedError: If a composite model is used with an engine
                 other than 'bumps'.
         """
@@ -1437,6 +1443,7 @@ class IQuana:
             raise ValueError(f"Unknown engine '{engine}'. Use 'bumps' or 'lmfit'.")
 
         self._check_composite_engine_support(engine)
+        self._check_start_values()
         self._check_scale_degeneracy()
         # Built once: the guard inspects exactly the σ the engine will divide by.
         evaluation_data = self._evaluation_data()
@@ -1477,6 +1484,21 @@ class IQuana:
                 "Composite models are currently supported by the 'bumps' engine only."
             )
 
+    def _check_start_values(self) -> None:
+        """Refuse a fit whose varying parameters start outside their bounds.
+
+        Raises:
+            ValueError: Naming every offending parameter, its value and its
+                bounds.
+        """
+        problems = self._param_manager.start_values_outside_bounds()
+        if problems:
+            raise ValueError(
+                f'Starting value outside its bounds: {"; ".join(problems)}. '
+                'Move the value inside the bounds (set_param(name, value=...)) '
+                'or widen the bounds.'
+            )
+
     def _check_scale_degeneracy(self) -> None:
         """Warn when the global scale and a component scale are both free.
 
@@ -1506,8 +1528,9 @@ class IQuana:
 
         Inspects the **evaluation copy** — the σ the engine will actually see
         under the active weighting mode — rather than ``self.data``. Zero σ
-        (including a missing ``dI``, which arrives zero-filled) makes the bumps χ² infinite for every parameter set, so the
-        bumps engine and the DREAM sampler cannot proceed; the scipy/lmfit
+        (including a missing ``dI``, which arrives zero-filled) makes the bumps
+        χ² infinite for every parameter set, so the bumps engine and the DREAM
+        sampler cannot proceed; the scipy/lmfit
         engine falls back to unit weights for the affected points (with a
         warning from the engine itself).
 
@@ -1530,7 +1553,8 @@ class IQuana:
             )
 
         index = get_fit_index(evaluation_data)
-        # apply_weighting zero-fills a missing dI, so dy is always a column here.
+        # apply_weighting zero-fills a missing or empty dI, so dy is always a
+        # full column here.
         dy_fit = np.asarray(evaluation_data.dy, dtype=float)[index]
         n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
         if n_zero == 0:
@@ -1654,6 +1678,7 @@ class IQuana:
                 "Composite models are currently supported by the 'bumps' "
                 "point-estimate engine only (fit(engine='bumps'))."
             )
+        self._check_start_values()
         self._check_scale_degeneracy()
         # Built once and checked before any sampling starts: without the guard,
         # data with no dI failed deep inside bumps with a message naming

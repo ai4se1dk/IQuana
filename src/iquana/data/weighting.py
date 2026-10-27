@@ -156,16 +156,18 @@ def apply_weighting(data: Any, setting: WeightingSetting, *, copy: bool = True) 
     Returns:
         A ``Data1D`` whose ``dy`` is the file's own column under ``'dI'``, or
         the full-length sigma of the mode otherwise. A missing column
-        (``dy is None``) becomes all zeros, the form sasdata gives a file
-        without ``dI``, so the fit guard reports it instead of sasmodels
-        failing on ``None``. SESANS data is otherwise returned unchanged under
+        (``dy`` is ``None`` or empty) becomes all zeros, the form sasdata
+        gives a file without ``dI``, so the fit guard reports it instead of
+        sasmodels failing on ``None`` or the guard failing on a short column.
+        SESANS data is otherwise returned unchanged under
         every mode: its ``y`` is a polarisation, not an intensity, so
         ``sqrt(|y|)`` or ``|y|`` has no meaning as a sigma (the fit guard
         refuses that combination).
     """
     weighted = deepcopy(data) if copy else data
     if setting.mode == 'dI' or getattr(weighted, 'isSesans', False):
-        if weighted.dy is None and weighted.y is not None:
+        missing = weighted.dy is None or np.asarray(weighted.dy).size == 0
+        if missing and weighted.y is not None:
             weighted.dy = np.zeros_like(np.asarray(weighted.y, dtype=float))
         return weighted
     weighted.dy = weighting_sigma(weighted.y, setting.mode)

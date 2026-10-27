@@ -121,9 +121,36 @@ result = fitter.fit(engine='bumps', method='de')
 LMFit provides access to SciPy's optimization algorithms.
 
 ```python
-# Levenberg-Marquardt
+# Default method: trust-region reflective, which keeps every parameter
+# inside its min/max bounds
+result = fitter.fit(engine='lmfit')
+
+# Levenberg-Marquardt: unconstrained, ignores the bounds
 result = fitter.fit(engine='lmfit', method='leastsq')
+
+# Global search within the bounds
+result = fitter.fit(engine='lmfit', method='differential_evolution')
 ```
+
+| Method | Bounds | Uncertainties |
+|---|---|---|
+| `'least_squares'` (default) | enforced | from the Jacobian |
+| `'leastsq'` | ignored; a warning names any parameter that ends outside them | from `cov_x` |
+| `'differential_evolution'` | enforced; every varying parameter needs finite bounds | none |
+
+Every varying parameter must **start** inside its bounds. Setting bounds with
+`set_param(name, min=..., max=...)` leaves the value where it was, so the fit
+refuses a value the new bounds exclude and names the parameter, its value and
+its bounds. Move the value with `set_param(name, value=...)` or widen the
+bounds. The check runs for both engines and for `fit_bayesian()`.
+
+!!! warning "Changed in 0.5"
+    The LMFit default method is `'least_squares'`; it was `'leastsq'`, which
+    does not enforce bounds and could return parameter values outside the
+    limits you set, such as a negative radius. Pass `method='leastsq'` for
+    the old behaviour; it now warns when a fitted value leaves its bounds.
+    A start value outside the bounds used to be accepted and is now refused
+    before the fit.
 
 #### Reading the result
 
@@ -806,6 +833,17 @@ This is an ordinary parameter link (see [Linking parameters](#combining-models-c
 `get_links()` reports it as `{'radius_effective': 'radius'}`, `radius_effective`
 is held at `radius` throughout the fit, and writing to it directly raises. Pass
 `radius_effective_mode='unconstrained'` (the default) to fit it independently.
+
+!!! warning "Changed in 0.5"
+    Before 0.5 the structure factor ignored the `radius_effective` parameter
+    in both modes: sasmodels' product kernel has its own switch, also named
+    `radius_effective_mode`, whose default computes the effective radius from
+    the form factor instead. IQuana now sets that kernel switch so
+    `radius_effective` is used. A fit with a structure factor can therefore
+    give different results from 0.4. The difference is largest for
+    `'unconstrained'` and for non-spherical form factors. An analysis file
+    saved by 0.4 loads with the switch corrected and a warning, and its saved
+    fit result is not restored, because it was computed with the old kernel.
 
 ### Combining Models (Composite Models)
 

@@ -162,6 +162,13 @@ def test_missing_dy_is_zero_filled_under_di():
     assert data.dy is None
 
 
+def test_empty_dy_is_zero_filled_under_di():
+    data = Data1D(x=np.array([0.01, 0.02]), y=np.array([4.0, 9.0]), dy=np.array([]))
+    weighted = apply_weighting(data, WeightingSetting('dI'))
+    np.testing.assert_array_equal(weighted.dy, np.zeros(2))
+    assert np.asarray(data.dy).size == 0
+
+
 @pytest.mark.parametrize('mode', WEIGHTING_MODES)
 def test_sesans_is_left_untouched(awkward, mode):
     awkward.isSesans = True
@@ -221,6 +228,17 @@ def test_data_without_dy_under_di_is_refused_by_bumps_and_unit_weighted_by_lmfit
         result = fitter.fit(engine='lmfit')
     assert 'unit-weighted' in result['weighting_note']
     assert fitter.data.dy is None
+
+
+def test_data_with_an_empty_dy_array_is_treated_as_missing(noisy):
+    # Used to fail with an IndexError in the fit guard.
+    data = Data1D(x=np.asarray(noisy.x).copy(), y=np.asarray(noisy.y).copy(), dy=np.array([]))
+    fitter = make_fitter(data)
+    with pytest.raises(ValueError, match=r'no intensity uncertainties \(dI\)'):
+        fitter.fit()
+    with pytest.warns(UserWarning, match=r'no intensity uncertainties \(dI\)'):
+        result = fitter.fit(engine='lmfit')
+    assert 'unit-weighted' in result['weighting_note']
 
 
 @pytest.mark.parametrize('engine', ['bumps', 'lmfit'])

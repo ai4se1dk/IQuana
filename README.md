@@ -170,8 +170,8 @@ result = fitter.fit()
 # Use BUMPS (default)
 result = fitter.fit(engine='bumps', method='amoeba')
 
-# Or use LMFit
-result = fitter.fit(engine='lmfit', method='leastsq')
+# Or use LMFit (default method 'least_squares', which respects the bounds)
+result = fitter.fit(engine='lmfit')
 ```
 
 ## Working with Structure Factors
@@ -326,8 +326,9 @@ See the [User Guide](https://ai4se1dk.github.io/IQuana/usage/) for details.
 **LMFit methods:**
 - `'least_squares'` - Trust Region Reflective (default, respects bounds)
 - `'leastsq'` - Levenberg-Marquardt (ignores bounds; warns if the fit leaves them)
-- `'differential_evolution'` - Global optimizer
-- `'powell'`, `'nelder'`, etc.
+- `'differential_evolution'` - Global optimizer within the bounds
+
+Every varying parameter must start inside its bounds; the fit names any that do not.
 
 ## Demo Notebooks
 

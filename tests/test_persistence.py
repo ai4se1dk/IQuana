@@ -220,6 +220,68 @@ def test_structure_factor_link_radius_round_trip(tmp_path):
     assert loaded.params['radius']['min'] == 5.0
 
 
+def _structure_factor_fitter(model, mode):
+    f = IQuana()
+    f.load_data(EXAMPLE_DATA)
+    f.set_model(model)
+    f.set_param('radius', value=20.0)
+    if model == 'cylinder':
+        f.set_param('length', value=400.0)
+    f.set_structure_factor('hardsphere', radius_effective_mode=mode)
+    f.set_param('volfraction', value=0.3)
+    if mode == 'unconstrained':
+        f.set_param('radius_effective', value=80.0)
+    return f
+
+
+@pytest.mark.parametrize(
+    'model,mode',
+    # sphere/link_radius is left out on purpose: sasmodels' mode 1 for sphere
+    # is "radius", so the stale switch gives the same curve and proves nothing.
+    [('cylinder', 'link_radius'), ('sphere', 'unconstrained')],
+)
+def test_pre_05_kernel_radius_switch_is_reset_on_load(tmp_path, model, mode):
+    """A file written before 0.5 holds sasmodels' default switch value, 1,
+    under which the kernel ignores radius_effective. Loading it must not undo
+    the structure-factor fix."""
+    current = _structure_factor_fitter(model, mode)
+    legacy = _structure_factor_fitter(model, mode)
+    legacy.set_param('radius_effective_mode', value=1)
+    q = np.geomspace(0.005, 0.3, 40)
+    assert not np.allclose(legacy.calculate(q=q), current.calculate(q=q))
+
+    path = os.path.join(str(tmp_path), 'legacy.json')
+    legacy.save_analysis(path)
+    with pytest.warns(UserWarning, match="radius_effective_mode' to 1"):
+        loaded = IQuana.load_analysis(path)
+
+    assert loaded.params['radius_effective_mode']['value'] == 0
+    np.testing.assert_allclose(loaded.calculate(q=q), current.calculate(q=q), rtol=1e-6)
+
+
+def test_result_fitted_under_the_pre_05_switch_is_not_restored(tmp_path):
+    legacy = _structure_factor_fitter('cylinder', 'link_radius')
+    legacy.set_param('radius_effective_mode', value=1)
+    attach_synthetic_fit(legacy)
+    path = os.path.join(str(tmp_path), 'legacy.json')
+    legacy.save_analysis(path)
+
+    with pytest.warns(UserWarning, match='not restored; refit'):
+        loaded = IQuana.load_analysis(path)
+    assert loaded.fit_result is None
+
+
+def test_current_structure_factor_file_loads_without_the_switch_warning(tmp_path):
+    f = _structure_factor_fitter('cylinder', 'link_radius')
+    attach_synthetic_fit(f)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        loaded, _ = round_trip(f, tmp_path)
+    assert not [w for w in caught if 'radius_effective_mode' in str(w.message)]
+    assert loaded.params['radius_effective_mode']['value'] == 0
+    assert loaded.fit_result is not None
+
+
 def test_explicit_link_round_trip(fitter, tmp_path):
     fitter.set_param('sld_solvent', value=3.0)
     fitter.link_params('sld', 'sld_solvent')

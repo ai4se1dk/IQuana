@@ -16,7 +16,12 @@ import numpy as np
 from ..console import ARROW, NO, YES
 from ..results import ParameterStateSnapshot
 from .polydispersity import PD_DISTRIBUTION_TYPES, PolydispersityManager
-from .structure_factor import StructureFactorManager, default_parameter_bounds
+from .structure_factor import (
+    KERNEL_RADIUS_MODE_PARAM,
+    KERNEL_RADIUS_MODE_UNCONSTRAINED,
+    StructureFactorManager,
+    default_parameter_bounds,
+)
 
 
 def derive_mixture_components(kernel: Any) -> list[tuple[str, str, str]]:
@@ -1117,6 +1122,31 @@ class ParameterManager:
         """
         return [name for name, info in self.params.items() if info['vary']]
 
+    def start_values_outside_bounds(self) -> list[str]:
+        """Describe every varying start value that lies outside its bounds.
+
+        ``set_param`` accepts bounds and value independently, so a value can
+        be left outside newly set bounds. A bounded optimizer cannot start
+        there (scipy's ``least_squares`` refuses without naming the
+        parameter). Polydispersity widths are bounded to [0, 1] by both
+        engines.
+
+        Returns:
+            One ``"name = value (bounds [min, max])"`` entry per offender, in
+            user-facing names; empty when every start is feasible.
+        """
+        problems = []
+        for name, info in self.params.items():
+            if info['vary'] and not info['min'] <= info['value'] <= info['max']:
+                problems.append(
+                    f'{name} = {info["value"]:g} (bounds [{info["min"]:g}, {info["max"]:g}])'
+                )
+        for base in self.get_varying_pd_params():
+            width = self._pd_manager.params[base]['pd']
+            if not 0.0 <= width <= 1.0:
+                problems.append(f'{self.to_display_name(base)}_pd = {width:g} (bounds [0, 1])')
+        return problems
+
     # =========================================================================
     # Polydispersity Methods
     # =========================================================================
@@ -1403,6 +1433,8 @@ class ParameterManager:
             new_params[follower]['value'] = new_params[target]['value']
             new_params[follower]['vary'] = False
 
+        self._enforce_kernel_radius_mode(new_params)
+
         # Commit.
         self.params = new_params
         self._links = new_links
@@ -1410,6 +1442,38 @@ class ParameterManager:
         self._pd_manager.set_enabled(bool(pd_cfg.get('enabled', False)))
         self._pd_manager.backup_state = _validated_pd_backup(pd_cfg.get('backup'))
         self._sf_manager.backed_up_params = new_backup
+
+    def _enforce_kernel_radius_mode(self, new_params: dict[str, dict[str, Any]]) -> None:
+        """Keep the product kernel reading ``radius_effective`` after a restore.
+
+        Applying a structure factor sets sasmodels' ``radius_effective_mode``
+        switch to 0 (see ``StructureFactorManager.apply``). The switch is an
+        ordinary kernel parameter, so a saved configuration carries it too, and
+        every file written before 0.5 holds the sasmodels default, 1, under
+        which the kernel computes R_eff from the form factor and ignores
+        ``radius_effective``. Restoring that value would silently undo the fix.
+
+        Only the structure-factor path is touched: a ``'form@sf'`` expression
+        loaded with ``set_model`` never had the switch set, so its saved value
+        is restored as it was.
+        """
+        if self._structure_factor_name is None:
+            return
+        switch = new_params.get(KERNEL_RADIUS_MODE_PARAM)
+        if switch is None:
+            return
+        if switch['value'] != KERNEL_RADIUS_MODE_UNCONSTRAINED:
+            warnings.warn(
+                f"The saved configuration sets the kernel switch '{KERNEL_RADIUS_MODE_PARAM}' "
+                f"to {switch['value']:g}, under which sasmodels ignores 'radius_effective' "
+                '(files written before IQuana 0.5 do this). It has been reset to '
+                f'{KERNEL_RADIUS_MODE_UNCONSTRAINED} so the structure factor uses '
+                "'radius_effective'. A fit result saved with the old value no longer "
+                'describes this model and is not restored; refit.',
+                stacklevel=4,
+            )
+        switch['value'] = KERNEL_RADIUS_MODE_UNCONSTRAINED
+        switch['vary'] = False
 
     def clear(self) -> None:
         """Clear all parameters and reset state."""

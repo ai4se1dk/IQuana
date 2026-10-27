@@ -66,6 +66,36 @@ class TestLMFitFitting(unittest.TestCase):
 
         self.assertLess(result['parameters']['radius']['value'], 10.0)
 
+    def test_start_value_outside_bounds_is_refused_by_name(self):
+        # Bounds moved past the value: least_squares cannot start there, and
+        # scipy's own error does not say which parameter is wrong.
+        self.fitter.set_param('radius', min=100.0, max=200.0)
+        self.fitter.set_param('scale', value=5.0)
+        for engine in ('lmfit', 'bumps'):
+            with self.subTest(engine=engine):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r'outside its bounds: radius = 20 \(bounds \[100, 200\]\); '
+                    r'scale = 5 \(bounds \[0\.01, 1\]\)',
+                ):
+                    self.fitter.fit(engine=engine)
+
+    def test_fixed_parameter_outside_bounds_does_not_block_the_fit(self):
+        self.fitter.set_param('sld', min=10.0, max=20.0)
+        result = self.fitter.fit(engine='lmfit')
+        self.assertEqual(result['method'], 'least_squares')
+
+    def test_varying_pd_width_outside_unit_interval_is_refused(self):
+        self.fitter.enable_polydispersity(True)
+        self.fitter.set_pd_param('radius', pd_width=1.5, vary=True)
+        with self.assertRaisesRegex(ValueError, r'radius_pd = 1\.5 \(bounds \[0, 1\]\)'):
+            self.fitter.fit(engine='lmfit')
+
+    def test_bayesian_sampling_checks_start_values_too(self):
+        self.fitter.set_param('radius', min=100.0, max=200.0)
+        with self.assertRaisesRegex(ValueError, r'outside its bounds: radius = 20'):
+            self.fitter.fit_bayesian(samples=10, burn=1)
+
 
 class TestLMFitFittingWithPolydispersity(unittest.TestCase):
     """Test scipy/lmfit fitting engine with polydispersity parameters."""
