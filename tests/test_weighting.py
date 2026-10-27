@@ -153,6 +153,15 @@ def test_missing_dy_is_created(mode):
     np.testing.assert_array_equal(weighted.dy, FORMULAS[mode](np.array([4.0, 9.0])))
 
 
+def test_missing_dy_is_zero_filled_under_di():
+    # Zeros are how sasdata represents a file without dI; sasmodels cannot
+    # build a calculator from dy=None.
+    data = Data1D(x=np.array([0.01, 0.02]), y=np.array([4.0, 9.0]))
+    weighted = apply_weighting(data, WeightingSetting('dI'))
+    np.testing.assert_array_equal(weighted.dy, np.zeros(2))
+    assert data.dy is None
+
+
 @pytest.mark.parametrize('mode', WEIGHTING_MODES)
 def test_sesans_is_left_untouched(awkward, mode):
     awkward.isSesans = True
@@ -200,6 +209,18 @@ def test_noise_free_data_still_refused_under_di_with_the_new_exit(noise_free):
     with pytest.raises(ValueError, match=r"set_weighting\('none'\)") as error:
         fitter.fit()
     assert "engine='lmfit'" in str(error.value)
+
+
+def test_data_without_dy_under_di_is_refused_by_bumps_and_unit_weighted_by_lmfit(noisy):
+    # Issue #24: dy=None used to reach sasmodels and fail with a TypeError.
+    data = Data1D(x=np.asarray(noisy.x).copy(), y=np.asarray(noisy.y).copy())
+    fitter = make_fitter(data)
+    with pytest.raises(ValueError, match=r'no intensity uncertainties \(dI\)'):
+        fitter.fit()
+    with pytest.warns(UserWarning, match=r'no intensity uncertainties \(dI\)'):
+        result = fitter.fit(engine='lmfit')
+    assert 'unit-weighted' in result['weighting_note']
+    assert fitter.data.dy is None
 
 
 @pytest.mark.parametrize('engine', ['bumps', 'lmfit'])
