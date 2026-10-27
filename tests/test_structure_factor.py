@@ -2,7 +2,10 @@ import os
 import unittest
 import warnings
 
+import numpy as np
 from sasmodels import core
+from sasmodels.data import empty_data1D
+from sasmodels.direct_model import DirectModel
 
 from iquana import IQuana, get_structure_factors
 from tests.helpers import create_concentrated_sphere_data_file
@@ -179,6 +182,55 @@ class TestStructureFactorLinkRadius(unittest.TestCase):
         # The mode-owned link retires with its structure factor; only a link the
         # user made themselves is reported as stale.
         self.assertFalse([w for w in caught if 'link' in str(w.message).lower()])
+
+
+class TestStructureFactorKernelRadiusMode(unittest.TestCase):
+    """The product kernel must actually use the radius_effective parameter.
+
+    sasmodels' product models carry an integer ``radius_effective_mode`` switch
+    whose default (1) computes R_eff from the form factor and ignores the
+    ``radius_effective`` parameter. Both IQuana modes need the switch at 0.
+    """
+
+    Q = np.logspace(-3, -0.5, 40)
+
+    def test_kernel_switch_is_unconstrained_in_both_modes(self):
+        for mode in ('unconstrained', 'link_radius'):
+            fitter = IQuana()
+            fitter.set_model('sphere')
+            fitter.set_structure_factor('hardsphere', radius_effective_mode=mode)
+            self.assertEqual(fitter.params['radius_effective_mode']['value'], 0, mode)
+
+    def test_unconstrained_radius_effective_changes_the_curve(self):
+        fitter = IQuana()
+        fitter.set_model('sphere')
+        fitter.set_param('radius', value=50.0)
+        fitter.set_structure_factor('hardsphere')
+        fitter.set_param('volfraction', value=0.3)
+
+        fitter.set_param('radius_effective', value=50.0)
+        at_50 = fitter.calculate(q=self.Q)
+        fitter.set_param('radius_effective', value=80.0)
+        at_80 = fitter.calculate(q=self.Q)
+
+        self.assertFalse(np.allclose(at_50, at_80))
+
+    def test_link_radius_uses_radius_not_a_computed_mode(self):
+        # For cylinder, sasmodels mode 1 is 'excluded volume', not 'radius', so
+        # leaving the switch at its default gives a different S(q).
+        fitter = IQuana()
+        fitter.set_model('cylinder')
+        fitter.set_param('radius', value=20.0)
+        fitter.set_param('length', value=400.0)
+        fitter.set_structure_factor('hardsphere', radius_effective_mode='link_radius')
+        fitter.set_param('volfraction', value=0.3)
+
+        kernel = core.load_model('cylinder@hardsphere', dtype='single', platform='dll')
+        pars = {name: info['value'] for name, info in fitter.params.items()}
+        pars.update(radius_effective_mode=0, radius_effective=20.0)
+        expected = DirectModel(empty_data1D(self.Q), kernel)(**pars)
+
+        np.testing.assert_allclose(fitter.calculate(q=self.Q), expected, rtol=1e-4)
 
 
 class TestStructureFactorRemoval(unittest.TestCase):
