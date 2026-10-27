@@ -75,6 +75,7 @@ test = "pytest tests/ -v"
 test-verbose = "pytest tests/ -vv"
 test-coverage = "pytest tests/ --cov=src/iquana --cov-report=html --cov-report=term --cov-report=xml"
 test-quick = "pytest tests/ -v -x"
+test-integration = "pytest tests/integration -m integration -v"
 lint = "ruff check src/ tests/ --fix"
 lint-check = "ruff check src/ tests/"
 format = "ruff format src/ tests/"
@@ -129,6 +130,7 @@ addopts = [
     "--tb=short",                  # Shorter traceback format
     "--strict-markers",            # Strict marker usage
     "-ra",                         # Show summary of all test outcomes
+    "-m", "not integration",       # Skip the slow examples/ suite; run with: pytest -m integration
 ]
 
 # Markers
