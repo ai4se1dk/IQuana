@@ -142,7 +142,10 @@ Every varying parameter must **start** inside its bounds. Setting bounds with
 `set_param(name, min=..., max=...)` leaves the value where it was, so the fit
 refuses a value the new bounds exclude and names the parameter, its value and
 its bounds. Move the value with `set_param(name, value=...)` or widen the
-bounds. The check runs for both engines and for `fit_bayesian()`.
+bounds. A varying parameter also needs room to move: the fit refuses bounds
+that meet (`min == max`; hold such a parameter with `vary=False` instead) or
+cross (`min > max`). The checks run for both engines and for
+`fit_bayesian()`.
 
 !!! warning "Changed in 0.5"
     The LMFit default method is `'least_squares'`; it was `'leastsq'`, which

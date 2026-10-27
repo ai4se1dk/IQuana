@@ -80,6 +80,45 @@ class TestLMFitFitting(unittest.TestCase):
                 ):
                     self.fitter.fit(engine=engine)
 
+    def test_varying_parameter_with_equal_bounds_is_refused_by_name(self):
+        # min == max: least_squares refuses without a name, bumps crashes inside
+        # its optimizer with "step has not accumulated enough history".
+        self.fitter.set_param('radius', value=20.0, min=20.0, max=20.0)
+        for engine in ('lmfit', 'bumps'):
+            with self.subTest(engine=engine):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r'^Bounds leave no room to fit: radius has min = max = 20 '
+                    r'\(hold it with vary=False instead\)\.$',
+                ):
+                    self.fitter.fit(engine=engine)
+
+    def test_varying_parameter_with_crossed_bounds_is_refused_by_name(self):
+        # The value test alone would say "move the value inside the bounds",
+        # which no value can satisfy.
+        self.fitter.set_param('radius', min=30.0, max=10.0)
+        with self.assertRaisesRegex(
+            ValueError,
+            r'^Bounds leave no room to fit: radius has min 30 above max 10 '
+            r'\(swap the bounds\)\.$',
+        ):
+            self.fitter.fit(engine='lmfit')
+
+    def test_empty_range_and_bad_start_are_reported_together(self):
+        self.fitter.set_param('radius', value=20.0, min=20.0, max=20.0)
+        self.fitter.set_param('scale', value=5.0)
+        with self.assertRaisesRegex(
+            ValueError,
+            r'radius has min = max = 20 .*\. Starting value outside its bounds: '
+            r'scale = 5 \(bounds \[0\.01, 1\]\)',
+        ):
+            self.fitter.fit(engine='lmfit')
+
+    def test_fixed_parameter_with_equal_bounds_does_not_block_the_fit(self):
+        self.fitter.set_param('sld', value=2.0, min=2.0, max=2.0)
+        result = self.fitter.fit(engine='lmfit')
+        self.assertEqual(result['method'], 'least_squares')
+
     def test_fixed_parameter_outside_bounds_does_not_block_the_fit(self):
         self.fitter.set_param('sld', min=10.0, max=20.0)
         result = self.fitter.fit(engine='lmfit')

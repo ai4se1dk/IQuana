@@ -1122,6 +1122,30 @@ class ParameterManager:
         """
         return [name for name, info in self.params.items() if info['vary']]
 
+    def varying_params_without_range(self) -> list[str]:
+        """Describe every varying parameter whose bounds leave nothing to fit.
+
+        ``set_param`` accepts ``min`` and ``max`` independently, so they can
+        meet (``min == max``) or cross (``min > max``). No engine copes with a
+        varying parameter like that: scipy's ``least_squares`` refuses without
+        naming the parameter, and bumps fails deep inside its optimizer.
+        ``MultiFitter`` refuses the same two cases in ``_check_free_root``.
+
+        Returns:
+            One entry per offender, in user-facing names, saying what to do;
+            empty when every varying parameter has room to move.
+        """
+        problems = []
+        for name, info in self.params.items():
+            if not info['vary']:
+                continue
+            low, high = info['min'], info['max']
+            if low == high:
+                problems.append(f'{name} has min = max = {low:g} (hold it with vary=False instead)')
+            elif low > high:
+                problems.append(f'{name} has min {low:g} above max {high:g} (swap the bounds)')
+        return problems
+
     def start_values_outside_bounds(self) -> list[str]:
         """Describe every varying start value that lies outside its bounds.
 
@@ -1129,7 +1153,8 @@ class ParameterManager:
         be left outside newly set bounds. A bounded optimizer cannot start
         there (scipy's ``least_squares`` refuses without naming the
         parameter). Polydispersity widths are bounded to [0, 1] by both
-        engines.
+        engines. Parameters whose bounds meet or cross are left to
+        :meth:`varying_params_without_range`, whose advice fits them.
 
         Returns:
             One ``"name = value (bounds [min, max])"`` entry per offender, in
@@ -1137,7 +1162,9 @@ class ParameterManager:
         """
         problems = []
         for name, info in self.params.items():
-            if info['vary'] and not info['min'] <= info['value'] <= info['max']:
+            if not info['vary'] or info['min'] >= info['max']:
+                continue
+            if not info['min'] <= info['value'] <= info['max']:
                 problems.append(
                     f'{name} = {info["value"]:g} (bounds [{info["min"]:g}, {info["max"]:g}])'
                 )

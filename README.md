@@ -328,7 +328,8 @@ See the [User Guide](https://ai4se1dk.github.io/IQuana/usage/) for details.
 - `'leastsq'` - Levenberg-Marquardt (ignores bounds; warns if the fit leaves them)
 - `'differential_evolution'` - Global optimizer within the bounds
 
-Every varying parameter must start inside its bounds; the fit names any that do not.
+Every varying parameter must start inside its bounds, and its bounds must leave room to
+move (`min < max`); the fit names any that do not.
 
 ## Demo Notebooks
 

@@ -1485,19 +1485,28 @@ class IQuana:
             )
 
     def _check_start_values(self) -> None:
-        """Refuse a fit whose varying parameters start outside their bounds.
+        """Refuse a fit no engine can start from the current bounds.
+
+        Two cases, reported together: a varying parameter whose bounds meet
+        or cross, and a varying start value outside its bounds.
 
         Raises:
-            ValueError: Naming every offending parameter, its value and its
-                bounds.
+            ValueError: Naming every offending parameter, with its bounds and
+                what to change.
         """
-        problems = self._param_manager.start_values_outside_bounds()
-        if problems:
-            raise ValueError(
-                f'Starting value outside its bounds: {"; ".join(problems)}. '
+        messages = []
+        no_range = self._param_manager.varying_params_without_range()
+        if no_range:
+            messages.append(f'Bounds leave no room to fit: {"; ".join(no_range)}.')
+        outside = self._param_manager.start_values_outside_bounds()
+        if outside:
+            messages.append(
+                f'Starting value outside its bounds: {"; ".join(outside)}. '
                 'Move the value inside the bounds (set_param(name, value=...)) '
                 'or widen the bounds.'
             )
+        if messages:
+            raise ValueError(' '.join(messages))
 
     def _check_scale_degeneracy(self) -> None:
         """Warn when the global scale and a component scale are both free.
