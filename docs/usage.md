@@ -524,9 +524,10 @@ data, and the error message points here.
   `save_results()`, `data_ops` and P(r) inversion all see the file's `dI`.
   The CSV header records both the `# Weighting mode:` that was set and the
   engine's `# Weighting:` note; the HTML report has a *Weighting* row.
-- **Zero σ is caught before the fit.** Under `'sqrt'` or `'abs'` a point with
-  intensity exactly zero gets σ = 0; bumps and DREAM refuse it, and lmfit
-  unit-weights it with a warning and records that in `weighting_note`.
+- **Zero σ is caught before the fit.** Under `'dI'` a missing or zero `dI`,
+  and under `'sqrt'` or `'abs'` an intensity of exactly zero, gives σ = 0;
+  bumps and DREAM refuse it, and lmfit unit-weights it with a warning and
+  records that in `weighting_note`.
 - **The residual panel follows the mode**: residuals are in σ units, or in
   intensity units (`Residuals (intensity units)`) under `'none'`. The label
   names no sign because the panel shows the residuals the engine stored, and

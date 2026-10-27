@@ -1505,8 +1505,8 @@ class IQuana:
         """Validate the per-point σ a fit is about to divide by.
 
         Inspects the **evaluation copy** — the σ the engine will actually see
-        under the active weighting mode — rather than ``self.data``. Zero (or
-        absent) σ makes the bumps χ² infinite for every parameter set, so the
+        under the active weighting mode — rather than ``self.data``. Zero σ
+        (including a missing ``dI``, which arrives zero-filled) makes the bumps χ² infinite for every parameter set, so the
         bumps engine and the DREAM sampler cannot proceed; the scipy/lmfit
         engine falls back to unit weights for the affected points (with a
         warning from the engine itself).
@@ -1530,12 +1530,9 @@ class IQuana:
             )
 
         index = get_fit_index(evaluation_data)
-        dy = getattr(evaluation_data, 'dy', None)
-        if dy is None or np.asarray(dy).size == 0:
-            n_zero = int(index.sum())
-        else:
-            dy_fit = np.asarray(dy, dtype=float)[index]
-            n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
+        # apply_weighting zero-fills a missing dI, so dy is always a column here.
+        dy_fit = np.asarray(evaluation_data.dy, dtype=float)[index]
+        n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
         if n_zero == 0:
             return
 
