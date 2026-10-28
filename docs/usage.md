@@ -121,9 +121,39 @@ result = fitter.fit(engine='bumps', method='de')
 LMFit provides access to SciPy's optimization algorithms.
 
 ```python
-# Levenberg-Marquardt
+# Default method: trust-region reflective, which keeps every parameter
+# inside its min/max bounds
+result = fitter.fit(engine='lmfit')
+
+# Levenberg-Marquardt: unconstrained, ignores the bounds
 result = fitter.fit(engine='lmfit', method='leastsq')
+
+# Global search within the bounds
+result = fitter.fit(engine='lmfit', method='differential_evolution')
 ```
+
+| Method | Bounds | Uncertainties |
+|---|---|---|
+| `'least_squares'` (default) | enforced | from the Jacobian |
+| `'leastsq'` | ignored; a warning names any parameter that ends outside them | from `cov_x` |
+| `'differential_evolution'` | enforced; every varying parameter needs finite bounds | none |
+
+Every varying parameter must **start** inside its bounds. Setting bounds with
+`set_param(name, min=..., max=...)` leaves the value where it was, so the fit
+refuses a value the new bounds exclude and names the parameter, its value and
+its bounds. Move the value with `set_param(name, value=...)` or widen the
+bounds. A varying parameter also needs room to move: the fit refuses bounds
+that meet (`min == max`; hold such a parameter with `vary=False` instead) or
+cross (`min > max`). The checks run for both engines and for
+`fit_bayesian()`.
+
+!!! warning "Changed in 0.5"
+    The LMFit default method is `'least_squares'`; it was `'leastsq'`, which
+    does not enforce bounds and could return parameter values outside the
+    limits you set, such as a negative radius. Pass `method='leastsq'` for
+    the old behaviour; it now warns when a fitted value leaves its bounds.
+    A start value outside the bounds used to be accepted and is now refused
+    before the fit.
 
 #### Reading the result
 
@@ -524,9 +554,10 @@ data, and the error message points here.
   `save_results()`, `data_ops` and P(r) inversion all see the file's `dI`.
   The CSV header records both the `# Weighting mode:` that was set and the
   engine's `# Weighting:` note; the HTML report has a *Weighting* row.
-- **Zero σ is caught before the fit.** Under `'sqrt'` or `'abs'` a point with
-  intensity exactly zero gets σ = 0; bumps and DREAM refuse it, and lmfit
-  unit-weights it with a warning and records that in `weighting_note`.
+- **Zero σ is caught before the fit.** Under `'dI'` a missing or zero `dI`,
+  and under `'sqrt'` or `'abs'` an intensity of exactly zero, gives σ = 0;
+  bumps and DREAM refuse it, and lmfit unit-weights it with a warning and
+  records that in `weighting_note`.
 - **The residual panel follows the mode**: residuals are in σ units, or in
   intensity units (`Residuals (intensity units)`) under `'none'`. The label
   names no sign because the panel shows the residuals the engine stored, and
@@ -806,6 +837,17 @@ This is an ordinary parameter link (see [Linking parameters](#combining-models-c
 is held at `radius` throughout the fit, and writing to it directly raises. Pass
 `radius_effective_mode='unconstrained'` (the default) to fit it independently.
 
+!!! warning "Changed in 0.5"
+    Before 0.5 the structure factor ignored the `radius_effective` parameter
+    in both modes: sasmodels' product kernel has its own switch, also named
+    `radius_effective_mode`, whose default computes the effective radius from
+    the form factor instead. IQuana now sets that kernel switch so
+    `radius_effective` is used. A fit with a structure factor can therefore
+    give different results from 0.4. The difference is largest for
+    `'unconstrained'` and for non-spherical form factors. An analysis file
+    saved by 0.4 loads with the switch corrected and a warning, and its saved
+    fit result is not restored, because it was computed with the old kernel.
+
 ### Combining Models (Composite Models)
 
 Datasets with several distinct features - for example a low-Q diffuse
@@ -983,6 +1025,12 @@ fitter.set_pd_param('radius', pd_width=0.2, pd_type='schulz')
 
 ### Enabling/Disabling Polydispersity
 
+Polydispersity is off for a freshly loaded model. The first `set_pd_param()`
+call that asks for it (a `pd_width` above zero or `vary=True`) switches it on.
+Once you switch it off explicitly, it stays off: further `set_pd_param()` calls
+still store their settings but warn that they take no part in the fit until you
+enable it again.
+
 You can globally enable or disable polydispersity:
 
 ```python
@@ -1014,8 +1062,7 @@ When fitting with polydispersity, you can choose to fix or vary the polydispersi
 # Set up model and polydispersity
 fitter.set_model('sphere')
 fitter.set_param('radius', value=50, min=10, max=200, vary=True)
-fitter.set_pd_param('radius', pd_width=0.1, vary=True)  # Fit the PD width
-fitter.enable_polydispersity(True)
+fitter.set_pd_param('radius', pd_width=0.1, vary=True)  # Fit the PD width; switches PD on
 
 # Fit - will optimize both radius and radius_pd
 result = fitter.fit(engine='bumps')

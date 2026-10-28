@@ -26,15 +26,36 @@ To run all tests:
 pytest
 ```
 
-Or using the provided script:
-```bash
-python run_tests.py
-```
-
 To run tests with coverage:
 ```bash
 pytest --cov=iquana
 ```
+
+### Integration tests
+
+`pytest` on its own skips the integration suite in `tests/integration`
+(`addopts` in `pyproject.toml` deselects the `integration` marker). That suite
+runs every `examples/*_example.py` script end to end, unmodified, in a
+temporary working directory with the example data files copied in, and with
+`fig.show()` turned into a no-op so no browser opens. It takes several
+minutes. Run it with:
+
+```bash
+pixi run test-integration
+```
+
+or, without Pixi:
+
+```bash
+pytest tests/integration -m integration
+```
+
+The **Integration** GitHub workflow runs the same suite on Linux, Windows and
+macOS for pull requests into `main` from a `release-*` branch, every Sunday,
+and on demand from the Actions tab. A new example script is picked up
+automatically if its name ends in `_example.py`. If it reads a data file from
+the working directory, add the file to `DATA_FILES` in
+`tests/integration/conftest.py`.
 
 ## Building Documentation
 

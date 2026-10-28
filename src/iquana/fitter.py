@@ -989,6 +989,10 @@ class IQuana:
         """
         Configure polydispersity for a parameter.
 
+        Asking for polydispersity (``pd_width > 0`` or ``vary=True``) switches
+        it on if it is still off by default. After an explicit
+        ``enable_polydispersity(False)`` it stays off and a warning is issued.
+
         Args:
             param_name: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
@@ -1032,6 +1036,8 @@ class IQuana:
 
         When disabled, polydispersity parameters are excluded from fitting
         but their values are preserved for when PD is re-enabled.
+        ``set_pd_param()`` enables it automatically, so an explicit call is
+        only needed to switch it back on after disabling it.
 
         Args:
             enabled: Whether to enable polydispersity (default: True)
@@ -1401,7 +1407,8 @@ class IQuana:
             engine: Fitting engine ('bumps' or 'lmfit')
             method: Optimization method (engine-specific)
                    - BUMPS: 'amoeba', 'lm', 'newton', 'de' (default: 'amoeba')
-                   - LMFit: 'leastsq', 'least_squares', 'differential_evolution', etc.
+                   - LMFit: 'least_squares', 'leastsq', 'differential_evolution', etc.
+                     (default: 'least_squares'; 'leastsq' ignores bounds)
             **kwargs: Additional arguments passed to the fitting engine
 
         Returns:
@@ -1424,8 +1431,14 @@ class IQuana:
             Changed in 0.4: ``chisq`` from the bumps engine used to be
             χ²/dof. Use ``reduced_chisq`` for that value.
 
+            Changed in 0.5: the LMFit default method is ``'least_squares'``
+            (it was ``'leastsq'``, which ignores bounds), and a varying
+            parameter that starts outside its bounds is refused before the
+            fit.
+
         Raises:
-            ValueError: If data or model not loaded, or invalid engine
+            ValueError: If data or model not loaded, invalid engine, or a
+                varying parameter starts outside its bounds
             NotImplementedError: If a composite model is used with an engine
                 other than 'bumps'.
         """
@@ -1436,6 +1449,7 @@ class IQuana:
             raise ValueError(f"Unknown engine '{engine}'. Use 'bumps' or 'lmfit'.")
 
         self._check_composite_engine_support(engine)
+        self._check_start_values()
         self._check_scale_degeneracy()
         # Built once: the guard inspects exactly the σ the engine will divide by.
         evaluation_data = self._evaluation_data()
@@ -1446,7 +1460,7 @@ class IQuana:
             return self._fit_bumps(evaluation_data, method or DEFAULT_BUMPS_METHOD, **kwargs)
         if not LMFIT_AVAILABLE:
             raise ValueError("scipy is not installed. Use 'bumps' engine or install scipy.")
-        return self._fit_lmfit(evaluation_data, method or 'leastsq', **kwargs)
+        return self._fit_lmfit(evaluation_data, method or 'least_squares', **kwargs)
 
     def _log_active_resolution(self) -> None:
         """Report the resolution and weighting a fit is about to use.
@@ -1476,6 +1490,30 @@ class IQuana:
                 "Composite models are currently supported by the 'bumps' engine only."
             )
 
+    def _check_start_values(self) -> None:
+        """Refuse a fit no engine can start from the current bounds.
+
+        Two cases, reported together: a varying parameter whose bounds meet
+        or cross, and a varying start value outside its bounds.
+
+        Raises:
+            ValueError: Naming every offending parameter, with its bounds and
+                what to change.
+        """
+        messages = []
+        no_range = self._param_manager.varying_params_without_range()
+        if no_range:
+            messages.append(f'Bounds leave no room to fit: {"; ".join(no_range)}.')
+        outside = self._param_manager.start_values_outside_bounds()
+        if outside:
+            messages.append(
+                f'Starting value outside its bounds: {"; ".join(outside)}. '
+                'Move the value inside the bounds (set_param(name, value=...)) '
+                'or widen the bounds.'
+            )
+        if messages:
+            raise ValueError(' '.join(messages))
+
     def _check_scale_degeneracy(self) -> None:
         """Warn when the global scale and a component scale are both free.
 
@@ -1504,9 +1542,10 @@ class IQuana:
         """Validate the per-point σ a fit is about to divide by.
 
         Inspects the **evaluation copy** — the σ the engine will actually see
-        under the active weighting mode — rather than ``self.data``. Zero (or
-        absent) σ makes the bumps χ² infinite for every parameter set, so the
-        bumps engine and the DREAM sampler cannot proceed; the scipy/lmfit
+        under the active weighting mode — rather than ``self.data``. Zero σ
+        (including a missing ``dI``, which arrives zero-filled) makes the bumps
+        χ² infinite for every parameter set, so the bumps engine and the DREAM
+        sampler cannot proceed; the scipy/lmfit
         engine falls back to unit weights for the affected points (with a
         warning from the engine itself).
 
@@ -1529,12 +1568,10 @@ class IQuana:
             )
 
         index = get_fit_index(evaluation_data)
-        dy = getattr(evaluation_data, 'dy', None)
-        if dy is None or np.asarray(dy).size == 0:
-            n_zero = int(index.sum())
-        else:
-            dy_fit = np.asarray(dy, dtype=float)[index]
-            n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
+        # apply_weighting zero-fills a missing or empty dI, so dy is always a
+        # full column here.
+        dy_fit = np.asarray(evaluation_data.dy, dtype=float)[index]
+        n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
         if n_zero == 0:
             return
 
@@ -1590,7 +1627,7 @@ class IQuana:
         )
         return self._finalize_fit(engine_output)
 
-    def _fit_lmfit(self, data: Any, method: str = 'leastsq', **kwargs: Any) -> dict[str, Any]:
+    def _fit_lmfit(self, data: Any, method: str = 'least_squares', **kwargs: Any) -> dict[str, Any]:
         """Fit *data* (the evaluation copy) using the scipy.optimize engine."""
         engine_output = fit_scipy(
             data=data,
@@ -1656,6 +1693,7 @@ class IQuana:
                 "Composite models are currently supported by the 'bumps' "
                 "point-estimate engine only (fit(engine='bumps'))."
             )
+        self._check_start_values()
         self._check_scale_degeneracy()
         # Built once and checked before any sampling starts: without the guard,
         # data with no dI failed deep inside bumps with a message naming

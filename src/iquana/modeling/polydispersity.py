@@ -9,8 +9,11 @@ PD_DEFAULTS = {
     'pd_type': 'gaussian',
     'vary': False,
 }
+"""Initial polydispersity settings for each parameter: width 0 (monodisperse),
+35 quadrature points spanning ±3σ of a fixed Gaussian."""
 
 PD_DISTRIBUTION_TYPES = ['gaussian', 'rectangle', 'lognormal', 'schulz', 'boltzmann']
+"""Distribution types accepted by ``set_pd_param(pd_type=...)``."""
 
 
 class PolydispersityManager:
@@ -20,6 +23,9 @@ class PolydispersityManager:
         self._param_names: list[str] = []
         self._params: dict[str, dict[str, Any]] = {}
         self._enabled = False
+        # Set once the user switches PD on or off; set_pd_param() requests
+        # then no longer override that choice.
+        self._user_decided = False
         self._backup: dict[str, Any] | None = None
 
     @property
@@ -67,6 +73,7 @@ class PolydispersityManager:
             for param_name in self._param_names
         }
         self._enabled = False
+        self._user_decided = False
 
     def get_parameters(self) -> list[str]:
         return list(self._param_names)
@@ -126,7 +133,19 @@ class PolydispersityManager:
         return pd_config
 
     def set_enabled(self, enabled: bool) -> None:
+        """Switch PD on or off as the user's own choice."""
         self._enabled = enabled
+        self._user_decided = True
+
+    def request(self) -> bool:
+        """Turn PD on for a set_pd_param request unless the user decided otherwise.
+
+        Returns:
+            Whether PD is on after the request.
+        """
+        if not self._enabled and not self._user_decided:
+            self._enabled = True
+        return self._enabled
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -189,6 +208,7 @@ class PolydispersityManager:
             'polydisperse_param_names': list(self._param_names),
             'polydisperse_params': {k: dict(v) for k, v in self._params.items()},
             'pd_enabled': self._enabled,
+            'user_decided': self._user_decided,
         }
 
     def restore(self) -> None:
@@ -196,6 +216,10 @@ class PolydispersityManager:
             self._param_names = self._backup['polydisperse_param_names']
             self._params = {k: dict(v) for k, v in self._backup['polydisperse_params'].items()}
             self._enabled = self._backup['pd_enabled']
+            # The choice travels with the state it describes. A backup loaded
+            # from a file has no 'user_decided', so it counts as restored state,
+            # the same rule import_config applies to the live state.
+            self._user_decided = self._backup.get('user_decided', False)
             self._backup = None
 
     def has_backup(self) -> bool:
@@ -205,4 +229,5 @@ class PolydispersityManager:
         self._param_names = []
         self._params = {}
         self._enabled = False
+        self._user_decided = False
         self._backup = None

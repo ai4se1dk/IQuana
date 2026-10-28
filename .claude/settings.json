@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(& .pixi\\\\envs\\\\default\\\\python.exe -I \"C:\\\\Users\\\\PIOTRR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--projects-ai-IQuana\\\\7983c089-e5bf-4fe7-8b1c-6ce6af2e6038\\\\scratchpad\\\\checks.py\")"
+      "mcp__GitKraken__issues_get_detail",
+      "Bash(python -m pytest tests -q -x)",
+      "Bash(gh project list:*)",
+      "Bash(gh project view:*)",
+      "Bash(gh project item-list:*)",
+      "Bash(gh project field-list:*)"
     ]
   }
 }

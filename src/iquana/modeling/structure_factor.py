@@ -27,6 +27,13 @@ def default_parameter_bounds(default: float, limits: tuple[float, float]) -> tup
 
 RADIUS_EFFECTIVE_MODES = ('unconstrained', 'link_radius')
 
+# sasmodels' own product-model switch: index 0 of
+# ``form_info.radius_effective_modes`` ("unconstrained") makes the kernel use the
+# ``radius_effective`` parameter; its default, 1, computes R_eff from the form
+# factor instead and silently ignores the parameter.
+KERNEL_RADIUS_MODE_PARAM = 'radius_effective_mode'
+KERNEL_RADIUS_MODE_UNCONSTRAINED = 0
+
 
 def validate_radius_effective_mode(mode: str) -> None:
     """Raise for an unsupported ``radius_effective_mode``.
@@ -111,6 +118,12 @@ class StructureFactorManager:
                     'vary': False,
                     'description': param.description,
                 }
+
+        # Both IQuana modes need the kernel to read 'radius_effective': freely
+        # in 'unconstrained', and via the equality link to 'radius' in
+        # 'link_radius'. The sasmodels default would override either.
+        if KERNEL_RADIUS_MODE_PARAM in new_params:
+            new_params[KERNEL_RADIUS_MODE_PARAM]['value'] = KERNEL_RADIUS_MODE_UNCONSTRAINED
 
         if 'scale' not in new_params:
             if 'scale' in self._form_factor_params:

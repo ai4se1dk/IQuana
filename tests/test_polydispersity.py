@@ -2,6 +2,7 @@
 
 import os
 import unittest
+import warnings
 from unittest.mock import Mock
 
 from iquana import (
@@ -378,6 +379,124 @@ class TestIQuanaPolydispersity(unittest.TestCase):
 
         self.assertEqual(pd_config['pd'], 0.1)
         self.assertTrue(pd_config['vary'])
+
+    def test_set_pd_param_width_enables_polydispersity(self):
+        """A nonzero width is a request for polydispersity, not a no-op."""
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_set_pd_param_vary_enables_polydispersity(self):
+        """vary=True must reach the fit without a separate enable call."""
+        self.fitter.set_pd_param('radius', vary=True)
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+        self.assertIn('radius_pd', self.fitter.get_varying_pd_params())
+
+    def test_set_pd_param_settings_only_does_not_enable(self):
+        """Quadrature or distribution settings alone do not ask for PD."""
+        self.fitter.set_pd_param('radius', pd_n=50, pd_type='schulz')
+        self.fitter.set_pd_param('radius', pd_width=0.0, vary=False)
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+    def test_set_pd_param_respects_explicit_disable(self):
+        """After switching PD off, set_pd_param warns instead of overriding it."""
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+        self.fitter.enable_polydispersity(False)
+
+        with self.assertWarns(UserWarning):
+            self.fitter.set_pd_param('radius', vary=True)
+
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+        self.assertTrue(self.fitter.get_pd_param('radius')['vary'])
+
+    def test_set_pd_param_enabling_by_default_does_not_warn(self):
+        """Switching PD on for the user is the expected path, not a warning."""
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            self.fitter.set_pd_param('radius', pd_width=0.1, vary=True)
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_set_pd_param_respects_disable_before_any_configuration(self):
+        """Switching PD off on a fresh model is a choice too."""
+        self.fitter.enable_polydispersity(False)
+
+        with self.assertWarns(UserWarning):
+            self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+    def test_set_pd_param_disable_survives_zeroed_widths(self):
+        """Setting every width back to zero does not forget the switch-off."""
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_pd_param('radius', pd_width=0.0)
+
+        with self.assertWarns(UserWarning):
+            self.fitter.set_pd_param('radius', vary=True)
+
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+    def test_set_model_resets_disable_choice(self):
+        """A newly loaded model starts from the default again."""
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_model('cylinder')
+
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_set_pd_param_enables_after_restoring_disabled_config(self):
+        """A restored PD-off state is not the user's choice, so a request enables it.
+
+        Files written before 0.5 hold widths with PD off, because set_pd_param()
+        never switched it on.
+        """
+        manager = self.fitter._param_manager
+        config = manager.export_config()
+        config['polydispersity']['params']['radius']['pd'] = 0.1
+        config['polydispersity']['enabled'] = False
+        manager.import_config(config)
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+        self.fitter.set_pd_param('radius', vary=True)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_removing_structure_factor_restores_default_choice(self):
+        """A choice made under a structure factor leaves with it."""
+        self.fitter.set_structure_factor('hardsphere')
+        self.fitter.enable_polydispersity(True)
+        self.fitter.remove_structure_factor()
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_removing_structure_factor_restores_explicit_disable(self):
+        """A switch-off made before the structure factor comes back with it."""
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_structure_factor('hardsphere')
+        self.fitter.enable_polydispersity(True)
+        self.fitter.remove_structure_factor()
+
+        with self.assertWarns(UserWarning):
+            self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+    def test_backup_restored_from_config_counts_as_default(self):
+        """A saved backup carries no choice, so a later request may enable PD."""
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_structure_factor('hardsphere')
+        manager = self.fitter._param_manager
+        manager.import_config(manager.export_config())
+        self.fitter.remove_structure_factor()
+
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
 
     def test_enable_polydispersity(self):
         """Test enabling polydispersity through IQuana."""
