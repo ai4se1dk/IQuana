@@ -1,7 +1,10 @@
 ---
 title: 'IQuana: Intuitive small-angle scattering data analysis'
 tags:
-  - 'Python, small-angle scattering, SANS, SAXS'
+  - Python
+  - small-angle scattering
+  - SANS
+  - SAXS
 authors:
   - name: 'Oliver S. Hammond'
     orcid: '0000-0002-5612-9343'
@@ -28,7 +31,7 @@ bibliography: paper.bib
 ---
 
 # Summary
-Small-angle scattering is a powerful inverse structure determination technique, using neutrons (SANS) and X-rays (SAXS) to resolve nanoscale objects in their native environment[@Gommes2021beginners]. `IQuana` ($I(Q)$ analysis) provides a flexible and model-agnostic Python framework for the fitting of analytical particle shape and interaction models to this reciprocal space scattering data. This reproducible and scriptable approach functions primarily in Jupyter notebooks, as an accessible interaction pathway for the `sasmodels` backend library of `SasView`. 
+Small-angle scattering is a powerful inverse structure determination technique, using neutrons (SANS) and X-rays (SAXS) to resolve nanoscale objects in their native environment[@Gommes2021beginners]. `IQuana` ($I(Q)$ analysis) provides a flexible and model-agnostic Python framework for the fitting of analytical particle shape and interaction models to this reciprocal space scattering data. This reproducible and scriptable approach functions primarily in Jupyter notebooks, as an accessible interaction pathway for the `sasmodels`[@Shrestha2026sasmodels] backend library of `SasView`. 
 
 
 # Statement of need
@@ -42,7 +45,7 @@ We therefore pitch `IQuana` at groups including researchers, educators, students
 # State of the field
 Arguably the most widely-used open source package for small-angle scattering data analysis and model fitting is `SasView` and its accompanying model library `sasmodels`, which provides a large library of form and structure factors with native support for common file formats and an (over-verbose) API, polydispersity, and instrument resolution. Comparable toolboxes are provided by `ATSAS`,[@Franke2025ATSAS] `SASfit` [@bressler2015sasfit] and `Irena`[@ilavsky2009irena], and to some extent the NIST macros for Igor Pro are still in use[@kline2006]. It is possible to use general-purpose libraries such as `SciPy` [@virtanen2020scipy] and `lmfit` [@lmfit] for these tasks, but scattering physics and file handling must be implemented.
 
-Fundamentally, `IQuana` adopts a philosophy of not reinventing and reimplementing scattering models, optimizers, file handling and visualization. Instead, we build directly on `SasView` componentry for a notebook-first implementation which uses `sasmodels` for analytical fitting functions, `sasdata` for handling of small-angle scattering data files in community standard formats such as NXcanSAS, and `BUMPS`, which provides the underlying reproducible optimizer framework.[@bumps] 
+Fundamentally, `IQuana` adopts a philosophy of not reinventing and reimplementing scattering models, optimizers, file handling and visualization. Instead, we build directly on `SasView` componentry for a notebook-first implementation which uses `sasmodels` for analytical fitting functions, `sasdata`[@Shrestha2026sasdata] for handling of small-angle scattering data files in community standard formats such as (NX)canSAS, and `BUMPS`, which provides the underlying reproducible optimizer framework.[@bumps] 
 
 # Software design
 We take the primary design consideration that the state of the analysis should be explicit and open to user evaluation: one must be able to inspect plots without altering fit results, and to be warned of potential fitting pitfalls (e.g. a fitted parameter hitting a bound, or data missing resolution information), without software silence. Results are provided as rich display objects generally using Plotly [@plotly] and not limited by a fixed GUI implementation, but also given as simple plain Python data, allowing easy onward machine readability. 
