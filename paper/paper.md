@@ -71,6 +71,6 @@ CodeRabbit AI: https://www.coderabbit.ai : help with code and documentation revi
 
 # Acknowledgements
 
-We acknowledge the developers of SasView, `sasmodels`, `sasdata` and `BUMPS`, on whose work IQuana is built.
+We acknowledge the developers of `SasView`, `sasmodels`, `sasdata` and `BUMPS`, on whose work `IQuana` is built.
 
 # References
