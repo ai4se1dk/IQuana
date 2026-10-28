@@ -62,11 +62,11 @@ There are a number of useful features conferred by the `IQuana` design approach,
 
 Human authors made all core design decisions, and reviewed, edited, and validated all AI-assisted outputs used in the development of this software. Tools used include:
 
-Anthropic Claude Fable 5.1: help with architectural design
-Anthropic Claude Opus 5.5: help with refactoring and unit test coverage
-Anthropic Claude Sonnet 5.5: help with documentation proofing
-Codacy https://app.codacy.com : help with testing coverage metrics
-CodeRabbit AI: https://www.coderabbit.ai : help with code and documentation review
+Anthropic Claude Fable 5.1: help with architectural design; 
+Anthropic Claude Opus 5.5: help with refactoring and unit test coverage;
+Anthropic Claude Sonnet 5.5: help with documentation proofing;
+Codacy https://app.codacy.com : help with testing coverage metrics;
+CodeRabbit AI: https://www.coderabbit.ai : help with code and documentation review. 
 
 
 # Acknowledgements
