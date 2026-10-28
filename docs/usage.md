@@ -1025,6 +1025,12 @@ fitter.set_pd_param('radius', pd_width=0.2, pd_type='schulz')
 
 ### Enabling/Disabling Polydispersity
 
+Polydispersity is off for a freshly loaded model. The first `set_pd_param()`
+call that asks for it (a `pd_width` above zero or `vary=True`) switches it on.
+Once you switch it off explicitly, it stays off: further `set_pd_param()` calls
+still store their settings but warn that they take no part in the fit until you
+enable it again.
+
 You can globally enable or disable polydispersity:
 
 ```python
@@ -1056,8 +1062,7 @@ When fitting with polydispersity, you can choose to fix or vary the polydispersi
 # Set up model and polydispersity
 fitter.set_model('sphere')
 fitter.set_param('radius', value=50, min=10, max=200, vary=True)
-fitter.set_pd_param('radius', pd_width=0.1, vary=True)  # Fit the PD width
-fitter.enable_polydispersity(True)
+fitter.set_pd_param('radius', pd_width=0.1, vary=True)  # Fit the PD width; switches PD on
 
 # Fit - will optimize both radius and radius_pd
 result = fitter.fit(engine='bumps')

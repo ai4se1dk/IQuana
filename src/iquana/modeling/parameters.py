@@ -1212,6 +1212,12 @@ class ParameterManager:
         """
         Configure polydispersity for a specific parameter.
 
+        A call that asks for polydispersity (``pd_width > 0`` or
+        ``vary=True``) switches it on while it is still off by default, so the
+        request is not silently dropped from the fit. After the user switched
+        it off with ``toggle_pd_visibility(False)`` it stays off and a warning
+        says so.
+
         Args:
             base_param: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
@@ -1235,6 +1241,16 @@ class ParameterManager:
             pd_type=pd_type,
             vary=vary,
         )
+
+        requested = (pd_width is not None and pd_width > 0) or bool(vary)
+        if requested and not self._pd_manager.request():
+            warnings.warn(
+                f"Polydispersity is switched off, so '{self.to_display_name(base_param)}' "
+                'polydispersity takes no part in the fit. Call '
+                'enable_polydispersity(True) to use it.',
+                UserWarning,
+                stacklevel=3,
+            )
 
     def get_pd_param(self, base_param: str) -> dict[str, Any]:
         """
@@ -1466,7 +1482,10 @@ class ParameterManager:
         self.params = new_params
         self._links = new_links
         self._pd_manager.params = new_pd
-        self._pd_manager.set_enabled(bool(pd_cfg.get('enabled', False)))
+        # Restored as state, not as the user's choice: files written before 0.5
+        # hold widths with PD off because set_pd_param() never switched it on,
+        # so a later request must still be able to.
+        self._pd_manager.enabled = bool(pd_cfg.get('enabled', False))
         self._pd_manager.backup_state = _validated_pd_backup(pd_cfg.get('backup'))
         self._sf_manager.backed_up_params = new_backup
 
