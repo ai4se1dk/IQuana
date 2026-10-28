@@ -32,7 +32,7 @@ Small-angle scattering is a powerful inverse structure determination technique, 
 
 
 # Statement of need
-Over the past few decades, small-angle scattering analysis has evolved from pioneering early CLI software packages such as FISH, into predominantly GUI-centric efforts, with prominent examples including `SasView`, `SASfit`, `Irena` and `ATSAS` [@Shrestha2026SasView; @bressler2015sasfit; @ilavsky2009irena; @Franke2025ATSAS].
+Over the past few decades, small-angle scattering analysis has evolved from pioneering early CLI software packages such as `FISH`, into predominantly GUI-centric efforts, with prominent examples including `SasView`, `SASfit`, `Irena` and `ATSAS` [@Shrestha2026SasView; @bressler2015sasfit; @ilavsky2009irena; @Franke2025ATSAS].
 
 Such initiatives have been powerful drivers of progress and allow effective exploration of datasets. On the flipside, these packages present their own respective drawbacks, such as challenges in reproducibility and repeatability, automation and ease of scripting. Today a user may, for example, implement their own analysis code, and even `SasView` could be directly scripted, if that user is willing to assemble data objects, model kernels, parameterization, resolution functions and calls to the optimiser– functionality which has been accrued across these major packages from years of frontier expertise. 
 
