@@ -461,6 +461,43 @@ class TestIQuanaPolydispersity(unittest.TestCase):
 
         self.assertTrue(self.fitter.is_polydispersity_enabled())
 
+    def test_removing_structure_factor_restores_default_choice(self):
+        """A choice made under a structure factor leaves with it."""
+        self.fitter.set_structure_factor('hardsphere')
+        self.fitter.enable_polydispersity(True)
+        self.fitter.remove_structure_factor()
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
+    def test_removing_structure_factor_restores_explicit_disable(self):
+        """A switch-off made before the structure factor comes back with it."""
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_structure_factor('hardsphere')
+        self.fitter.enable_polydispersity(True)
+        self.fitter.remove_structure_factor()
+
+        with self.assertWarns(UserWarning):
+            self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertFalse(self.fitter.is_polydispersity_enabled())
+
+    def test_backup_restored_from_config_counts_as_default(self):
+        """A saved backup carries no choice, so a later request may enable PD."""
+        self.fitter.enable_polydispersity(False)
+        self.fitter.set_structure_factor('hardsphere')
+        manager = self.fitter._param_manager
+        manager.import_config(manager.export_config())
+        self.fitter.remove_structure_factor()
+
+        self.fitter.set_pd_param('radius', pd_width=0.1)
+
+        self.assertTrue(self.fitter.is_polydispersity_enabled())
+
     def test_enable_polydispersity(self):
         """Test enabling polydispersity through IQuana."""
         self.fitter.enable_polydispersity(True)

@@ -208,6 +208,7 @@ class PolydispersityManager:
             'polydisperse_param_names': list(self._param_names),
             'polydisperse_params': {k: dict(v) for k, v in self._params.items()},
             'pd_enabled': self._enabled,
+            'user_decided': self._user_decided,
         }
 
     def restore(self) -> None:
@@ -215,6 +216,10 @@ class PolydispersityManager:
             self._param_names = self._backup['polydisperse_param_names']
             self._params = {k: dict(v) for k, v in self._backup['polydisperse_params'].items()}
             self._enabled = self._backup['pd_enabled']
+            # The choice travels with the state it describes. A backup loaded
+            # from a file has no 'user_decided', so it counts as restored state,
+            # the same rule import_config applies to the live state.
+            self._user_decided = self._backup.get('user_decided', False)
             self._backup = None
 
     def has_backup(self) -> bool:
