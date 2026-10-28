@@ -23,6 +23,9 @@ class PolydispersityManager:
         self._param_names: list[str] = []
         self._params: dict[str, dict[str, Any]] = {}
         self._enabled = False
+        # Set once the user switches PD on or off; set_pd_param() requests
+        # then no longer override that choice.
+        self._user_decided = False
         self._backup: dict[str, Any] | None = None
 
     @property
@@ -70,6 +73,7 @@ class PolydispersityManager:
             for param_name in self._param_names
         }
         self._enabled = False
+        self._user_decided = False
 
     def get_parameters(self) -> list[str]:
         return list(self._param_names)
@@ -129,7 +133,19 @@ class PolydispersityManager:
         return pd_config
 
     def set_enabled(self, enabled: bool) -> None:
+        """Switch PD on or off as the user's own choice."""
         self._enabled = enabled
+        self._user_decided = True
+
+    def request(self) -> bool:
+        """Turn PD on for a set_pd_param request unless the user decided otherwise.
+
+        Returns:
+            Whether PD is on after the request.
+        """
+        if not self._enabled and not self._user_decided:
+            self._enabled = True
+        return self._enabled
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -208,4 +224,5 @@ class PolydispersityManager:
         self._param_names = []
         self._params = {}
         self._enabled = False
+        self._user_decided = False
         self._backup = None

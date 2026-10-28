@@ -989,6 +989,10 @@ class IQuana:
         """
         Configure polydispersity for a parameter.
 
+        Asking for polydispersity (``pd_width > 0`` or ``vary=True``) switches
+        it on if it is still off by default. After an explicit
+        ``enable_polydispersity(False)`` it stays off and a warning is issued.
+
         Args:
             param_name: Name of the base parameter (e.g., 'radius')
             pd_width: Polydispersity width (relative, 0.0 = monodisperse)
@@ -1032,6 +1036,8 @@ class IQuana:
 
         When disabled, polydispersity parameters are excluded from fitting
         but their values are preserved for when PD is re-enabled.
+        ``set_pd_param()`` enables it automatically, so an explicit call is
+        only needed to switch it back on after disabling it.
 
         Args:
             enabled: Whether to enable polydispersity (default: True)
