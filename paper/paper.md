@@ -28,7 +28,7 @@ bibliography: paper.bib
 ---
 
 # Summary
-Small-angle scattering is a powerful inverse structure determination technique, using neutrons (SANS) and X-rays (SAXS) to resolve nanoscale objects in their native environment[@Gommes2021beginners]. `IQuana` provides a flexible and model-agnostic Python framework for the fitting of analytical particle shape and interaction models to this reciprocal space scattering data. This reproducible and scriptable approach functions primarily in Jupyter notebooks, as an accessible interaction pathway for the `sasmodels` backend library of `SasView`. 
+Small-angle scattering is a powerful inverse structure determination technique, using neutrons (SANS) and X-rays (SAXS) to resolve nanoscale objects in their native environment[@Gommes2021beginners]. `IQuana` ($I(Q)$ analysis) provides a flexible and model-agnostic Python framework for the fitting of analytical particle shape and interaction models to this reciprocal space scattering data. This reproducible and scriptable approach functions primarily in Jupyter notebooks, as an accessible interaction pathway for the `sasmodels` backend library of `SasView`. 
 
 
 # Statement of need
@@ -36,7 +36,7 @@ Over the past few decades, small-angle scattering analysis has evolved from pion
 
 Such initiatives have been powerful drivers of progress and allow effective exploration of datasets. On the flipside, these packages present their own respective drawbacks, such as challenges in reproducibility and repeatability, automation and ease of scripting. Today a user may, for example, implement their own analysis code, and even `SasView` could be directly scripted, if that user is willing to assemble data objects, model kernels, parameterization, resolution functions and calls to the optimiser– functionality which has been accrued across these major packages from years of frontier expertise. 
 
-We therefore pitch `IQuana` ($I(Q)$ analysis) at groups including researchers, educators, students, and developers. We envisage these groups to use `IQuana` to construct reproducible, version-controlled analysis records to better meet today's FAIR data demands.[@FAIRdata] Didactically, we believe there is power in this tool which encourages the user to understand the chain of scientific decisions being made in the analysis process, exposing features which may be treated as black boxes in fully-fledged GUI software, i.e. `load_data` > `set_model` > `set_param` > `fit`.
+We therefore pitch `IQuana` at groups including researchers, educators, students, and developers. We envisage these groups to use `IQuana` to construct reproducible, version-controlled analysis records to better meet today's FAIR data demands.[@FAIRdata] Didactically, we believe there is power in this tool which encourages the user to understand the chain of scientific decisions being made in the analysis process, exposing features which may be treated as black boxes in fully-fledged GUI software, i.e. `load_data` > `set_model` > `set_param` > `fit`.
 
 
 # State of the field
