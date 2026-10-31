@@ -247,13 +247,20 @@ class IQuana:
 
         Args:
             data: A sasdata ``Data1D`` object with populated ``x`` and ``y``
-                arrays. 2D data is not supported.
+                arrays, or any object with a ``to_data1d()`` method, such as
+                a :class:`~iquana.structure.ScatteringProfile` from the
+                Generic Scattering Calculator, which is converted first. A
+                computed curve has no dI and no dQ, so choose the weighting
+                and resolution before fitting it (``set_weighting('abs')``,
+                ``set_resolution('none')``). 2D data is not supported.
 
         Raises:
             TypeError: If the object is 2D data or lacks ``x``/``y`` arrays.
             ValueError: If ``x``/``y`` are empty, have mismatched lengths, or
                 contain non-positive Q values.
         """
+        if hasattr(data, 'to_data1d') and not hasattr(data, 'x'):
+            data = data.to_data1d()
         if getattr(data, 'qx_data', None) is not None:
             raise TypeError('2D data is not supported. Provide a Data1D object.')
         x = getattr(data, 'x', None)
@@ -285,6 +292,12 @@ class IQuana:
         has_dx = has_real_data(self.data.dx)
         label = getattr(data, 'title', '') or getattr(data, 'filename', '') or 'in-memory dataset'
 
+        hint = ''
+        if self._data_source.is_computed_curve() and not has_dy:
+            hint = (
+                "\n  Computed curve: fit it with set_weighting('abs') and "
+                "set_resolution('none'), or attach dI with to_data1d(dI=...)"
+            )
         logger.info(
             f'{OK} Data set: {label}\n'
             f'  Q range: {self.data.qmin:.4f} to {self.data.qmax:.4f} {INVERSE_ANGSTROM}\n'
@@ -292,7 +305,7 @@ class IQuana:
             f'  Error (dI) column: {"yes" if has_dy else "no"}\n'
             f'  Resolution (dQ) column: {"yes" if has_dx else "no"}\n'
             f'  Resolution mode: {self._resolution.describe()}\n'
-            f'  Weighting mode: {self._weighting.describe()}'
+            f'  Weighting mode: {self._weighting.describe()}' + hint
         )
 
     def set_q_range(self, qmin: float | None = None, qmax: float | None = None) -> None:
@@ -1583,11 +1596,19 @@ class IQuana:
                 else f'Data has {n_zero} of {n_fit} fitted points with zero intensity '
                 'uncertainty (dI)'
             )
-            exits = (
-                'Provide dI values, exclude the points (mask or set_q_range), '
-                "choose another weighting (set_weighting('sqrt') or "
-                "set_weighting('none'))"
-            )
+            if n_zero == n_fit and self._data_source.is_computed_curve():
+                exits = (
+                    'It is a computed curve (SincCity) with no uncertainties: use '
+                    "set_weighting('abs') for equal relative weight across decades, or "
+                    "set_weighting('sqrt'), and set_resolution('none'), since the curve "
+                    'is unsmeared'
+                )
+            else:
+                exits = (
+                    'Provide dI values, exclude the points (mask or set_q_range), '
+                    "choose another weighting (set_weighting('sqrt') or "
+                    "set_weighting('none'))"
+                )
         else:
             note = self._weighting.note()
             detail = (
@@ -2163,7 +2184,9 @@ class IQuana:
         What ``save_results()`` writes is the *outcome* of a fit. This writes
         how the fit was set up: the model expression and its component names,
         every parameter value, bound and vary flag, polydispersity, links, the
-        structure factor, the resolution mode and the Q range. Reload it with
+        structure factor, the resolution mode and the Q range. A dataset given
+        with :meth:`set_data` has no file to point to, so its arrays are written
+        too and the analysis reloads without ``data=``. Reload it with
         :meth:`load_analysis`.
 
         JSON rather than pickle, so the file is readable, diffable, reviewable
@@ -2218,11 +2241,14 @@ class IQuana:
 
         Args:
             filename: Path to the JSON analysis file.
-            data: Dataset to use instead of the recorded one: a path, or an
-                in-memory dataset. Required for an analysis saved from
-                ``set_data()``, whose dataset has no file to reload. An
-                explicit value that cannot be used is an error rather than a
-                silent fall back to the recorded sample.
+            data: Dataset to use instead of the recorded one: a path, an
+                in-memory dataset, or a computed
+                :class:`~iquana.structure.ScatteringProfile`. An analysis
+                saved from ``set_data()`` carries its dataset's arrays and
+                reloads without it; a file written before schema version 3
+                does not, and needs it. An explicit value that cannot be used
+                is an error rather than a silent fall back to the recorded
+                sample.
             allow_custom_models: Permit a model expression that is not built
                 into sasmodels. Off by default: loading such an expression
                 imports a plugin module named by the file, so it is code

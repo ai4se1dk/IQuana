@@ -231,9 +231,10 @@ print(
 )
 next_sample.save_analysis(os.path.join(moved, 'sample_B.json'))
 
-# An analysis whose data came from set_data() (a data_ops result, or a
-# simulated dataset) has no file to reopen, so load_analysis needs data= for it
-# every time. The error message quotes the dataset's provenance to say which.
+# An analysis whose data came from set_data() (a data_ops result, a simulated
+# dataset, or a curve from the Generic Scattering Calculator) has no file to
+# reopen, so its arrays are written into the analysis and load_analysis needs
+# nothing else. Files from IQuana 0.5 or earlier hold no arrays and need data=.
 
 # ============================================================================
 # Part 7: Reports to Share
