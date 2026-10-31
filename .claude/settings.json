@@ -6,7 +6,9 @@
       "Bash(gh project list:*)",
       "Bash(gh project view:*)",
       "Bash(gh project item-list:*)",
-      "Bash(gh project field-list:*)"
+      "Bash(gh project field-list:*)",
+      "PowerShell(pip show sinccity 2>$null)",
+      "PowerShell(python -c \"import sinccity, sys; print\\(sinccity.__version__\\); print\\(sinccity.__all__\\); print\\(sinccity.__file__\\)\")"
     ]
   }
 }

@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-_ARRAY_FIELDS = ('x', 'y', 'dy', 'dx', 'dxl', 'dxw')
+ARRAY_FIELDS = ('x', 'y', 'dy', 'dx', 'dxl', 'dxw')
 
 
 def _hash_file(path: str) -> str | None:
@@ -50,7 +50,7 @@ def fingerprint_arrays(data: Any) -> str:
     name alone, so "no dx" and "dx of zeros" are distinguishable.
     """
     digest = hashlib.sha256()
-    for name in _ARRAY_FIELDS:
+    for name in ARRAY_FIELDS:
         digest.update(name.encode())
         values = getattr(data, name, None)
         if values is None:
@@ -134,6 +134,10 @@ class DataSource:
             label=label,
             processes=describe_processes(data),
         )
+
+    def is_computed_curve(self) -> bool:
+        """True for a curve from the Generic Scattering Calculator (SincCity)."""
+        return any(line.startswith('sinccity:') for line in self.processes)
 
     def current_file_sha256(self) -> str | None:
         """Re-hash the source file now, or None when there is no readable file."""

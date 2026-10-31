@@ -16,6 +16,7 @@ IQuana provides a unified interface for analysing and fitting SANS data using di
 - **User-Friendly Parameter Management**: Easy-to-use interface for setting parameter values, bounds, and fitting flags
 - **Comprehensive Visualization**: Automatic plotting of data, fitted model, and residuals
 - **Result Export**: Save fitted parameters and curves to CSV files
+- **Scattering from a Structure**: I(q) of a PDB, GRO, SLD or VTK structure by the exact Debye formula, with a 3D view of its points, handed straight to a fit (see [Scattering from a Structure](usage.md#scattering-from-a-structure-generic-scattering-calculator) and the `notebooks/structure_calculator.ipynb` walkthrough)
 
 ## Quick Example
 

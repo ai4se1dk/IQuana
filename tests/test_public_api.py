@@ -38,6 +38,8 @@ class TestPublicApi(unittest.TestCase):
             'PrResult',
             'InsufficientDataError',
             'PrEstimationError',
+            'GenericScatteringCalculator',
+            'structure',
         }
         self.assertLessEqual(expected, set(iquana.__all__))
 
@@ -46,6 +48,14 @@ class TestPublicApi(unittest.TestCase):
 
         self.assertEqual(data_ops.__name__, 'iquana.data.ops')
         self.assertEqual(pr_inversion.__name__, 'iquana.inversion')
+
+    def test_structure_module_re_exports_sinccity(self):
+        import sinccity
+
+        self.assertEqual(iquana.structure.__name__, 'iquana.structure')
+        self.assertIs(
+            iquana.structure.GenericScatteringCalculator, sinccity.GenericScatteringCalculator
+        )
 
     def test_weighting_api(self):
         fitter = iquana.IQuana()

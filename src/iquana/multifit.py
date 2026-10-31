@@ -419,8 +419,11 @@ class MultiFitter:
             name: Identifier for this dataset. Must match ``[A-Za-z][A-Za-z0-9_]*``
                 and not be a Python keyword, because it appears unquoted on the
                 left of the dot in every reference to one of its parameters.
-            data: A file path, or an in-memory ``Data1D``. The dataset is copied,
-                so later edits to the object passed here do not reach the fit.
+            data: A file path, an in-memory ``Data1D``, or a computed
+                :class:`~iquana.structure.ScatteringProfile`. The dataset is
+                copied, so later edits to the object passed here do not reach
+                the fit. A joint fit weights by dI, so give a computed curve
+                uncertainties with ``profile.to_data1d(dI=...)``.
             model: Model expression, e.g. ``'sphere'`` or ``'sphere@hardsphere'``.
                 May be set later through the handle's ``set_model``.
             dataset: Which entry to take from a file holding several.
