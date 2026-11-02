@@ -4,9 +4,9 @@ SANS Model Fitter - A flexible template for fitting SANS data with SasModels
 
 __version__ = '0.5.0'
 
-from . import examples
+from . import examples, structure
 from . import inversion as pr_inversion
-from .console import set_verbosity
+from .console import adopt_logger, set_verbosity
 from .data import ops as data_ops
 from .fitter import IQuana, get_all_models, get_structure_factors
 from .inversion import InsufficientDataError, PrEstimationError, PrResult
@@ -16,6 +16,9 @@ from .modeling.polydispersity import PD_DEFAULTS, PD_DISTRIBUTION_TYPES
 from .multi_results import MultiFitReport, MultiFitResult
 from .multifit import DatasetHandle, MultiFitter
 from .results import FitResultContract, PosteriorSummary
+from .structure import GenericScatteringCalculator
+
+adopt_logger('sinccity')
 
 __all__ = [
     'IQuana',
@@ -39,4 +42,6 @@ __all__ = [
     'PrResult',
     'InsufficientDataError',
     'PrEstimationError',
+    'GenericScatteringCalculator',
+    'structure',
 ]

@@ -27,7 +27,11 @@ from iquana.persistence import (
 )
 from iquana.results import FitArtifacts, FitResultContract, PosteriorDigest, PosteriorSummary
 
-from .helpers import create_loading_test_data_file, create_multi_dataset_xml_file
+from .helpers import (
+    create_loading_test_data_file,
+    create_loading_test_data_file_with_resolution,
+    create_multi_dataset_xml_file,
+)
 
 EXAMPLE_DATA = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'example_sans_data.dat'
@@ -741,44 +745,83 @@ def test_dataset_selector_by_name_round_trips(tmp_path):
     assert loaded._data_source.dataset_index == 1
 
 
-def test_in_memory_data_records_provenance_and_needs_an_override(tmp_path):
+def _in_memory_fitter():
+    """A fitter on a data_ops result with dI and dQ, one NaN point and one masked point."""
     from iquana import data_ops
 
-    sample = data_ops.load(EXAMPLE_DATA)
+    sample = data_ops.load(create_loading_test_data_file_with_resolution(20))
     scaled = data_ops.multiply(sample, 2.0)
-
+    scaled.y[3] = np.nan
+    scaled.mask = np.zeros(scaled.y.size, dtype=bool)
+    scaled.mask[5] = True
     f = IQuana()
     f.set_data(scaled)
     f.set_model('sphere')
+    return f, scaled
+
+
+def test_in_memory_data_is_embedded_and_reloads_without_data(tmp_path):
+    f, _ = _in_memory_fitter()
+    attach_synthetic_fit(f)
     path = os.path.join(str(tmp_path), 'a.json')
     f.save_analysis(path)
 
     section = json.load(open(path, encoding='utf-8'))['data']
     assert section['source'] == 'memory'
     assert 'path_absolute' not in section
+    assert section['arrays']['y'][3] == 'nan'
 
-    with pytest.raises(AnalysisFileError, match='in-memory dataset'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # no "data has changed" warning
+        loaded = IQuana.load_analysis(path)
+    assert fingerprint_arrays(loaded.data) == fingerprint_arrays(f.data)
+    assert loaded._data_source.label == f._data_source.label
+    assert loaded._data_source.processes == f._data_source.processes
+    assert loaded.get_q_range() == f.get_q_range()
+    assert loaded._fit_contract is not None
+
+
+def test_supplied_data_overrides_the_embedded_arrays(tmp_path):
+    f, scaled = _in_memory_fitter()
+    path = os.path.join(str(tmp_path), 'a.json')
+    f.save_analysis(path)
+
+    other = IQuana()
+    other.load_data(EXAMPLE_DATA)
+    with pytest.warns(UserWarning, match='not the one this analysis was saved from'):
+        loaded = IQuana.load_analysis(path, data=other.data)
+    assert fingerprint_arrays(loaded.data) == fingerprint_arrays(other.data)
+
+
+def test_edited_embedded_arrays_drop_the_result(tmp_path):
+    f, _ = _in_memory_fitter()
+    attach_synthetic_fit(f)
+    path = os.path.join(str(tmp_path), 'a.json')
+    f.save_analysis(path)
+    _corrupt(path, lambda d: d['data']['arrays']['y'].__setitem__(0, 1.0e6))
+
+    with pytest.warns(UserWarning, match='data has changed since'):
+        loaded = IQuana.load_analysis(path)
+    assert loaded._fit_contract is None
+
+
+def test_a_schema_2_in_memory_analysis_still_needs_data(tmp_path):
+    """Files written before arrays were embedded keep the old contract."""
+    f, scaled = _in_memory_fitter()
+    path = os.path.join(str(tmp_path), 'a.json')
+    f.save_analysis(path)
+
+    def as_schema_2(document):
+        document['schema']['version'] = 2
+        del document['data']['arrays']
+
+    _corrupt(path, as_schema_2)
+    with pytest.raises(AnalysisFileError, match='in-memory dataset') as excinfo:
         IQuana.load_analysis(path)
+    assert 'iquana.data_ops' in str(excinfo.value)
 
     loaded = IQuana.load_analysis(path, data=scaled)
     assert loaded.model_name == 'sphere'
-
-
-def test_in_memory_provenance_is_quoted_in_the_error(tmp_path):
-    from iquana import data_ops
-
-    sample = data_ops.load(EXAMPLE_DATA)
-    difference = data_ops.subtract(sample, 0.5)
-    f = IQuana()
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        f.set_data(difference)
-    f.set_model('sphere')
-    path = os.path.join(str(tmp_path), 'a.json')
-    f.save_analysis(path)
-    with pytest.raises(AnalysisFileError) as excinfo:
-        IQuana.load_analysis(path)
-    assert 'iquana.data_ops' in str(excinfo.value)
 
 
 def test_source_file_change_is_detected(tmp_path):

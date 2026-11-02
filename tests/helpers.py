@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 import numpy as np
@@ -129,3 +130,27 @@ def create_concentrated_sphere_data_file(num_points=30):
 
     temp_file.close()
     return temp_file.name
+
+
+#: The pixel sphere of ``write_pixel_sphere``: radius, lattice step (Å), SLDs (10^-6 Å^-2).
+SPHERE_RADIUS, SPHERE_STEP = 30.0, 3.0
+SPHERE_SLD, SPHERE_SLD_D2O = 1.0, 6.34
+
+
+def write_pixel_sphere(directory):
+    """Write the pixels of a sphere as an SLD file in *directory* and return its path.
+
+    Only the sphere's pixels are written, with the volume column, so no solvent
+    box scatters when the solvent changes (a contrast series stays a sphere).
+    """
+    n = int(SPHERE_RADIUS / SPHERE_STEP) + 1
+    axis = np.arange(-n, n + 1) * SPHERE_STEP
+    xyz = np.stack(np.meshgrid(axis, axis, axis, indexing='ij'), -1).reshape(-1, 3)
+    xyz = xyz[(xyz**2).sum(axis=1) <= SPHERE_RADIUS**2]
+    columns = np.zeros((len(xyz), 8))
+    columns[:, :3] = xyz
+    columns[:, 3] = SPHERE_SLD * 1e-6
+    columns[:, 7] = SPHERE_STEP**3
+    path = os.path.join(str(directory), 'sphere.sld')
+    np.savetxt(path, columns, header='x y z sld mx my mz volume', comments='')
+    return path

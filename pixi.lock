@@ -235,6 +235,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pandocfilters-1.5.0-pyhd8ed1ab_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/parso-0.8.7-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/periodictable-2.1.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.11.8-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/plotly-7.0.0-pyhd8ed1ab_0.conda
@@ -291,6 +292,7 @@ environments:
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a7/72/6ca6e58958bb2251a4fe68a964106d608d89af33cfbe21cf418b173574f5/sasdata-0.12.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ac/7d/8bf1fd8bae8247743968bb76d027a1ac5bd2c4b44495fba6a71b30d10706/lxml-6.1.3-cp313-cp313-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/da/91/a280454143ffdec07e0e6cead7dcea0571d2267104b6d09a46fe255bf757/sinccity-0.2.0-py3-none-any.whl
       osx-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/aiohappyeyeballs-2.7.1-pyhd8ed1ab_0.conda
@@ -382,6 +384,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pandocfilters-1.5.0-pyhd8ed1ab_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/parso-0.8.7-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/periodictable-2.1.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.11.8-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/plotly-7.0.0-pyhd8ed1ab_0.conda
@@ -550,6 +553,7 @@ environments:
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/8c/a5/eee2fc77eee5ea68e4a4334b1def1781a3beaeefd3d98e81b4a38dc447b7/lxml-6.1.3-cp313-cp313-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/a7/72/6ca6e58958bb2251a4fe68a964106d608d89af33cfbe21cf418b173574f5/sasdata-0.12.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/da/91/a280454143ffdec07e0e6cead7dcea0571d2267104b6d09a46fe255bf757/sinccity-0.2.0-py3-none-any.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/aiohappyeyeballs-2.7.1-pyhd8ed1ab_0.conda
@@ -641,6 +645,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pandocfilters-1.5.0-pyhd8ed1ab_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/parso-0.8.7-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/periodictable-2.1.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.11.8-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/plotly-7.0.0-pyhd8ed1ab_0.conda
@@ -809,6 +814,7 @@ environments:
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/52/05/3ef45db776baea068044c799bbba68f3ca00a440c0e930a17c572f3d9639/lxml-6.1.3-cp313-cp313-macosx_10_13_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/a7/72/6ca6e58958bb2251a4fe68a964106d608d89af33cfbe21cf418b173574f5/sasdata-0.12.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/da/91/a280454143ffdec07e0e6cead7dcea0571d2267104b6d09a46fe255bf757/sinccity-0.2.0-py3-none-any.whl
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/aiohappyeyeballs-2.7.1-pyhd8ed1ab_0.conda
@@ -899,6 +905,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pandocfilters-1.5.0-pyhd8ed1ab_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/parso-0.8.7-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/periodictable-2.1.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.11.8-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/plotly-7.0.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
@@ -1060,6 +1067,7 @@ environments:
       - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a7/72/6ca6e58958bb2251a4fe68a964106d608d89af33cfbe21cf418b173574f5/sasdata-0.12.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c0/28/e46a7702bd95e9043291f7c3539b6184cba66f96cea9936f20939b284eeb/lxml-6.1.3-cp313-cp313-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/da/91/a280454143ffdec07e0e6cead7dcea0571d2267104b6d09a46fe255bf757/sinccity-0.2.0-py3-none-any.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -1278,7 +1286,7 @@ packages:
   - python_abi 3.13.* *_cp313
   license: BSD-3-Clause AND MIT AND EPL-2.0
   purls:
-  - pkg:pypi/backports-zstd?source=compressed-mapping
+  - pkg:pypi/backports-zstd?source=hash-mapping
   run_exports: {}
   size: 243747
   timestamp: 1788491297080
@@ -2584,7 +2592,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/psutil?source=compressed-mapping
+  - pkg:pypi/psutil?source=hash-mapping
   run_exports: {}
   size: 228664
   timestamp: 1788189989243
@@ -2710,7 +2718,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/rpds-py?source=compressed-mapping
+  - pkg:pypi/rpds-py?source=hash-mapping
   run_exports: {}
   size: 300095
   timestamp: 1788577298075
@@ -3286,7 +3294,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/cached-property?source=compressed-mapping
+  - pkg:pypi/cached-property?source=hash-mapping
   run_exports: {}
   size: 16597
   timestamp: 1787678456483
@@ -3890,7 +3898,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/jsonschema?source=compressed-mapping
+  - pkg:pypi/jsonschema?source=hash-mapping
   run_exports: {}
   size: 82084
   timestamp: 1787579299493
@@ -4144,7 +4152,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/jupyterlab?source=compressed-mapping
+  - pkg:pypi/jupyterlab?source=hash-mapping
   run_exports: {}
   size: 13178193
   timestamp: 1786398793317
@@ -4369,7 +4377,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/notebook?source=compressed-mapping
+  - pkg:pypi/notebook?source=hash-mapping
   run_exports: {}
   size: 4631065
   timestamp: 1786455253264
@@ -4437,6 +4445,21 @@ packages:
   run_exports: {}
   size: 82472
   timestamp: 1777722955579
+- conda: https://conda.anaconda.org/conda-forge/noarch/periodictable-2.1.0-pyh5ded981_0.conda
+  sha256: 687b2cf27c24b04c85a365c8a57da6a48d2ef3b2238941b7b96cc882244e32f1
+  md5: 195d34e23d0dc983b9b3464acc79d6e1
+  depends:
+  - python >=3.11
+  - numpy
+  - pyparsing >=3.0.0
+  - python
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/periodictable?source=hash-mapping
+  run_exports: {}
+  size: 710219
+  timestamp: 1792585637206
 - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
   sha256: 202af1de83b585d36445dc1fda94266697341994d1a3328fabde4989e1b3d07a
   md5: d0d408b1f18883a944376da5cf8101ea
@@ -4474,7 +4497,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/plotly?source=compressed-mapping
+  - pkg:pypi/plotly?source=hash-mapping
   run_exports: {}
   size: 4318002
   timestamp: 1788870458030
@@ -5144,7 +5167,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/wcwidth?source=compressed-mapping
+  - pkg:pypi/wcwidth?source=hash-mapping
   run_exports: {}
   size: 146490
   timestamp: 1788174996551
@@ -5181,7 +5204,7 @@ packages:
   license: Apache-2.0
   license_family: APACHE
   purls:
-  - pkg:pypi/websocket-client?source=hash-mapping
+  - pkg:pypi/websocket-client?source=compressed-mapping
   run_exports: {}
   size: 78254
   timestamp: 1788531123810
@@ -7163,7 +7186,7 @@ packages:
   - python_abi 3.13.* *_cp313
   license: BSD-3-Clause AND MIT AND EPL-2.0
   purls:
-  - pkg:pypi/backports-zstd?source=compressed-mapping
+  - pkg:pypi/backports-zstd?source=hash-mapping
   run_exports: {}
   size: 241808
   timestamp: 1788491298513
@@ -9240,7 +9263,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/kiwisolver?source=compressed-mapping
+  - pkg:pypi/kiwisolver?source=hash-mapping
   run_exports: {}
   size: 73459
   timestamp: 1788505726845
@@ -10101,7 +10124,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/psutil?source=compressed-mapping
+  - pkg:pypi/psutil?source=hash-mapping
   run_exports: {}
   size: 246124
   timestamp: 1788190001566
@@ -10147,7 +10170,7 @@ packages:
   license: PSF-2.0
   license_family: PSF
   purls:
-  - pkg:pypi/pywin32?source=compressed-mapping
+  - pkg:pypi/pywin32?source=hash-mapping
   run_exports: {}
   size: 4466676
   timestamp: 1787374335274
@@ -10503,6 +10526,8 @@ packages:
   - sasmodels>=1.0
   - sasdata>=0.8
   - bumps>=1.0
+  - sinccity>=0.2.0,<0.3
+  - periodictable>=1.6
   - pytest>=7.0 ; extra == 'dev'
   - pytest-cov>=4.0 ; extra == 'dev'
   - pandas>=2.0.0 ; extra == 'dev'
@@ -10571,3 +10596,19 @@ packages:
   - beautifulsoup4 ; extra == 'htmlsoup'
   - lxml-html-clean ; extra == 'html-clean'
   requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/da/91/a280454143ffdec07e0e6cead7dcea0571d2267104b6d09a46fe255bf757/sinccity-0.2.0-py3-none-any.whl
+  name: sinccity
+  version: 0.2.0
+  sha256: aac46e046e8e488375abe5d8e80809ae65fcffe387848b6801e799cfbbc7b22c
+  requires_dist:
+  - numpy>=2.0
+  - periodictable>=1.6
+  - plotly>=5.0 ; extra == 'plot'
+  - sasdata>=0.8 ; extra == 'sasdata'
+  - mkdocs>=1.6,<2 ; extra == 'docs'
+  - mkdocs-material>=9.6 ; extra == 'docs'
+  - mkdocstrings[python]>=1.0 ; extra == 'docs'
+  - sinccity[plot,sasdata] ; extra == 'dev'
+  - pytest>=7.0 ; extra == 'dev'
+  - ruff>=0.14 ; extra == 'dev'
+  requires_python: '>=3.10'

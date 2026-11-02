@@ -15,9 +15,11 @@ deliberately forwards non-identifier atoms to sasmodels, which resolves
 file can still cause code to run once it is interpreted as a model-loading
 instruction. Only built-in model names are accepted unless the caller opts in.
 
-**No bulk arrays.** Data curves and posterior chains stay out. A covariance
-matrix does not: it is ``n_free`` by ``n_free``, and it is the most useful part
-of a result to keep.
+**No bulk arrays, except a dataset that has no file.** Fitted curves and
+posterior chains stay out. A covariance matrix does not: it is ``n_free`` by
+``n_free``, and it is the most useful part of a result to keep. An in-memory
+dataset (``set_data``: a ``data_ops`` result, a simulated or computed curve) is
+written out, because nothing else can bring it back.
 """
 
 import hashlib
@@ -33,7 +35,7 @@ from sasmodels import core
 
 from . import __version__
 from .console import OK, logger
-from .data.provenance import DataSource, fingerprint_arrays
+from .data.provenance import ARRAY_FIELDS, DataSource, fingerprint_arrays
 from .data.resolution import ResolutionSetting
 from .fileio import atomic_write
 from .report import json_safe
@@ -43,8 +45,11 @@ SCHEMA_FORMAT = 'iquana-analysis'
 # Version 2 (#72 item 3) fills the 'weighting' key that version 1 reserved,
 # and records the weighting in each fit context. Version 1 documents read as
 # 'dI', the only weighting that existed when they were written.
-SCHEMA_VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+# Version 3 embeds the arrays of an in-memory dataset in the 'data' section, so
+# an analysis saved from set_data() reloads without data=. Version 1 and 2
+# documents have no arrays and still need data= for such a dataset.
+SCHEMA_VERSION = 3
+SUPPORTED_VERSIONS = (1, 2, 3)
 
 #: The weighting every pre-weighting (0.4, schema 1) fit was made under.
 DEFAULT_WEIGHTING = {'mode': 'dI'}
@@ -412,6 +417,8 @@ def _data_section(source: DataSource, data: Any, analysis_path: str) -> dict[str
         'array_fingerprint_now': fingerprint_arrays(data),
         'processes': list(source.processes),
     }
+    if source.kind == 'memory':
+        section['arrays'] = _arrays_section(data)
     if source.kind == 'file':
         section['path_absolute'] = source.path
         section['path_relative'] = _relative_path(source.path or '', analysis_path)
@@ -421,6 +428,48 @@ def _data_section(source: DataSource, data: Any, analysis_path: str) -> dict[str
         section['file_sha256_at_load'] = source.file_sha256
         section['file_sha256_now'] = source.current_file_sha256()
     return section
+
+
+def _arrays_section(data: Any) -> dict[str, Any]:
+    """The columns ``fingerprint_arrays`` covers, as JSON.
+
+    Non-finite values are written as the strings ``float()`` reads back
+    (``'nan'``, ``'inf'``, ``'-inf'``): a masked point may carry a NaN, and
+    the reloaded arrays must reproduce the fingerprint exactly.
+    """
+    section: dict[str, Any] = {}
+    for name in ARRAY_FIELDS:
+        values = getattr(data, name, None)
+        section[name] = (
+            None
+            if values is None
+            else [v if math.isfinite(v) else str(v) for v in np.asarray(values, float).tolist()]
+        )
+    mask = getattr(data, 'mask', None)
+    section['mask'] = None if mask is None else np.asarray(mask, dtype=bool).tolist()
+    return section
+
+
+def _dataset_from_section(section: dict[str, Any]) -> Any:
+    """Rebuild the in-memory dataset an ``arrays`` section was written from."""
+    from sasdata.dataloader.data_info import Data1D, Process
+
+    columns = {
+        name: None if values is None else np.array([float(v) for v in values])
+        for name, values in section['arrays'].items()
+        if name != 'mask'
+    }
+    data = Data1D(x=columns['x'], y=columns['y'], dx=columns['dx'], dy=columns['dy'])
+    data.dxl, data.dxw = columns['dxl'], columns['dxw']
+    mask = section['arrays'].get('mask')
+    if mask is not None:
+        data.mask = np.array(mask, dtype=bool)
+    data.title = section.get('label', '')
+    for line in section.get('processes') or []:
+        process = Process()
+        process.name, _, process.description = line.partition(': ')
+        data.process.append(process)
+    return data
 
 
 def build_analysis_dict(
@@ -437,6 +486,7 @@ def build_analysis_dict(
             'version': SCHEMA_VERSION,
             'written_by': __version__,
             'sasmodels': _package_version('sasmodels'),
+            'sinccity': _package_version('sinccity'),
         },
         'data': (
             None
@@ -600,11 +650,14 @@ def resolve_data(
             'This analysis was saved without any data. Supply one with '
             'load_analysis(path, data=...).'
         )
+    if section.get('source') == 'memory' and section.get('arrays'):
+        return _dataset_from_section(section), None
     if section.get('source') != 'file':
         detail = '; '.join(section.get('processes') or []) or section.get('label', '')
         raise AnalysisFileError(
-            'This analysis used an in-memory dataset, which cannot be reloaded '
-            f'from the file. Supply it with load_analysis(path, data=...). It was: {detail}'
+            'This analysis used an in-memory dataset and was written before IQuana '
+            'stored its arrays (schema version 3), so it cannot be reloaded from the '
+            f'file. Supply it with load_analysis(path, data=...). It was: {detail}'
         )
 
     tried: list[str] = []
@@ -642,7 +695,7 @@ def warn_about_source_changes(document: dict[str, Any], data: Any, supplied: boo
         )
     else:
         warnings.warn(
-            'The data file has changed since this analysis was saved. The '
+            'The data has changed since this analysis was saved. The '
             'configuration is restored; any saved fit result is not.',
             stacklevel=3,
         )

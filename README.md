@@ -38,6 +38,7 @@ A flexible, model-agnostic Python template for fitting Small-Angle Neutron Scatt
 - **P(r) Inversion**: Model-free pair distance distribution analysis (indirect Fourier transform) via `pr_inversion` — D_max exploration, automatic regularization/term selection, and Rg/I(0)/positivity diagnostics
 - **Fit-Quality Reporting**: Reduced χ² alongside raw χ², point and parameter counts, covariance/correlation matrices, a convergence verdict and a warning when a fitted parameter rests on a bound — all via `fitter.get_fit_report()`, which renders as a table in a notebook, as text, or as Markdown
 - **Result Export**: Save fitted parameters and curves to CSV files
+- **Scattering from a Structure**: Compute I(q) of atoms (PDB, GRO), pixels (SLD) or mesh cells (VTK) with the exact Debye formula, view the points in 3D, and hand the curve to a fit with `set_data(profile)` — `GenericScatteringCalculator`, from the [SincCity](https://easyscience.github.io/SincCity/) package
 - **Save, Reload and Share**: Store the whole analysis (data source, model, parameters, links, resolution, result) as JSON with `save_analysis()` / `IQuana.load_analysis()`, or write a single shareable HTML report with `report()`
 
 ## Installation
@@ -343,6 +344,7 @@ move (`min < max`); the fit names any that do not.
 - [notebooks/sasmodels-basic.ipynb](notebooks/sasmodels-basic.ipynb) — the same kind of fit done directly with sasmodels and BUMPS, without IQuana, for comparison.
 - [notebooks/simultaneous_fitting.ipynb](notebooks/simultaneous_fitting.ipynb) — fitting several datasets together with `MultiFitter`: contrast variation, shared parameters, constraints, and joint diagnostics.
 - [notebooks/four_form_factors.ipynb](notebooks/four_form_factors.ipynb) — fitting a sum of four form factors against one dataset: what to fix, why a global optimizer is needed, and how to read the parameter correlations that remain.
+- [notebooks/structure_calculator.ipynb](notebooks/structure_calculator.ipynb) — the Generic Scattering Calculator: I(q) from SLD, PDB and VTK structures, the 3D point view, a check against the analytic sphere, fitting the computed curve, and a contrast series fitted with `MultiFitter`.
 
 
 ## Design Philosophy

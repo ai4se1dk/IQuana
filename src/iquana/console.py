@@ -92,6 +92,28 @@ def set_verbosity(level: int | str = 'info') -> None:
     logger.setLevel(level)
 
 
+class _ForwardedHandler(logging.Handler):
+    """Hand another package's records to IQuana's logger, under IQuana's level."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if logger.isEnabledFor(record.levelno):
+            logger.handle(record)
+
+
+def adopt_logger(name: str) -> None:
+    """Route the records of the logger *name* through IQuana's logger.
+
+    IQuana calls this for ``'sinccity'`` at import, so ``set_verbosity`` and
+    any handler attached to the ``'iquana'`` logger cover the calculator's
+    messages too. The other logger's own level still applies first, and the
+    records keep their ``name``, so a filter can still tell them apart.
+    """
+    other = logging.getLogger(name)
+    other.handlers.clear()
+    other.addHandler(_ForwardedHandler())
+    other.propagate = False
+
+
 def _encodable(text: str) -> bool:
     """Return True when the current stdout can encode *text*."""
     encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'

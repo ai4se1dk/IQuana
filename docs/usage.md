@@ -326,9 +326,11 @@ fitter.plot_results()      # the saved result, no refit needed
 The file is JSON, so it is readable, reviewable in a pull request, and safe to
 accept from a collaborator. It records the model expression and its component
 names, every parameter value, bound and vary flag, polydispersity, links, the
-structure factor, the resolution mode and the Q range. It does not record data
-curves or posterior sample chains; the covariance matrix, being small and
-useful, is kept.
+structure factor, the resolution mode and the Q range. It does not record
+fitted curves or posterior sample chains; the covariance matrix, being small
+and useful, is kept. Data from a file is recorded by its path; a dataset given
+with `set_data()` (a `data_ops` result, a simulated or computed curve) has no
+file, so its arrays are written into the analysis.
 
 **Saving and loading guarantee the configuration, not a refit.** A restored
 fitter is identical in setup and produces the same theory, residuals and fit
@@ -357,16 +359,20 @@ restored.
 #### Finding the data again
 
 The path to the data file is recorded twice, relative to the analysis file and
-absolute, so moving both together to another machine still works. Supply
-another dataset with `data=`:
+absolute, so moving both together to another machine still works. An
+in-memory dataset reloads from the arrays stored in the file. Supply another
+dataset with `data=`:
 
 ```python
 # A different sample, same model setup
 fitter = IQuana.load_analysis('silica_35C.json', data='silica_45C.dat')
 
-# An in-memory dataset (required for an analysis saved from set_data)
+# An in-memory dataset or a computed curve in place of the stored one
 fitter = IQuana.load_analysis('difference.json', data=data_ops.subtract(a, b))
 ```
+
+An analysis saved by IQuana 0.5 or earlier (schema version 2) holds no arrays,
+so an in-memory dataset still has to be passed with `data=`.
 
 An analysis saved with `include_result=False` is a template: a configured model
 with no sample-specific outcome, ready to apply to the next dataset.
@@ -799,6 +805,109 @@ Things to know:
 
 See `examples/pr_inversion_example.py` and
 `notebooks/pr_inversion_demo.ipynb` for a complete walkthrough.
+
+### Scattering from a Structure (Generic Scattering Calculator)
+
+`GenericScatteringCalculator` computes the orientationally averaged I(q) of a
+real-space structure: atoms from a PDB or GRO file, pixels from an SLD file, or
+the cells of a VTK mesh. It is the [SincCity](https://easyscience.github.io/SincCity/)
+package, the nuclear, 1D part of SasView's *Generic Scattering Calculator*,
+which IQuana installs and re-exports; `iquana.structure` holds the rest of its
+API (`ScatteringProfile`, `Structure`, `load`, the readers and the errors).
+
+```python
+from iquana import GenericScatteringCalculator
+
+gsc = GenericScatteringCalculator()
+gsc.load_structure('particle.sld')     # .pdb, .gro, .sld or .vtk
+gsc.plot_points()                      # SasView's "Draw Points"
+gsc.set_q_grid(3e-4, 0.3, 30)          # optional: SasView's defaults
+gsc.set_params(sld_solvent=6.34)       # optional: 10^-6 Å^-2, D2O here
+profile = gsc.calculate()
+gsc.plot_profile()                     # or gsc.plot_profile(data=fitter.data)
+```
+
+The calculation is the exact Debye sum over all points:
+
+```text
+w_j  = (sld_j - sld_solvent * 1e-6) * volume_j        SLD in Å^-2, volume in Å^3
+D(q) = Σ_j Σ_k w_j w_k sin(q r_jk) / (q r_jk)
+I(q) = scale * 1e8 * D(q) / V_norm + background       1/cm
+```
+
+`sld_solvent` is in 10⁻⁶ Å⁻², like every sasmodels SLD parameter
+(`fit.constrain('d2o.sld_solvent', 6.34)`). SasView's calculator takes Å⁻²
+instead; a value that looks like Å⁻² triggers a warning. The structure's own
+SLDs stay in Å⁻², as the files store them.
+
+**Normalisation.** `V_norm` is the volume of the points that scatter, those
+whose SLD differs from the solvent's. For a particle of pixels or cells in a
+box of solvent, the curve at `scale=1` then equals sasmodels' form factor at
+`scale=1`, so `scale` is a volume fraction. When the solvent exactly matches a
+population of points, those points stop counting, and the curve jumps by the
+volume ratio. The calculation line always prints `V_norm` and the number of
+zero-contrast points, and a population that almost matches triggers a warning.
+For contrast-variation series, set `set_params(normalisation_volume=...)`
+explicitly (`normalisation_volume='auto'` restores the default).
+
+File formats, the four kernels, deuteration, size polydispersity, speed, and
+what to know about PDB volumes in a solvent are covered in the
+[SincCity user guide](https://easyscience.github.io/SincCity/).
+
+**The curve is theory.** It has no dI and no dQ. `set_data()` takes the profile
+directly (or `profile.to_data1d()`), and the data line it prints says what to
+set before fitting:
+
+```python
+fitter = IQuana()
+fitter.set_data(profile)
+fitter.set_weighting('abs')      # σ = |I|, equal relative weight
+fitter.set_resolution('none')
+fitter.set_q_range(qmax=0.1)     # optional: stay below the first minimum
+```
+
+Fitting under the default `'dI'` weighting stops with a message that names
+these two calls. A pixel or cell structure deviates most from its smooth
+counterpart at the form-factor minima, which `'abs'` weighting counts fully, so
+start near the expected size or fit below the first minimum.
+
+**Contrast series.** `calculate_series()` computes one profile per entry and
+runs the pair pass once. `MultiFitter` weights every dataset by its own dI
+(weighting modes for joint fits are issue #87), so give each computed curve
+uncertainties with `to_data1d(dI=...)`:
+
+```python
+profiles = gsc.calculate_series([
+    {'label': 'D2O', 'params': {'sld_solvent': 6.34}},
+    {'label': 'H2O', 'params': {'sld_solvent': -0.56}},
+])
+fit = MultiFitter()
+for p in profiles:
+    fit.add(p.label.lower(), p.to_data1d(dI=0.02 * p.intensity), model='sphere')
+fit.share('radius')
+```
+
+The structure must then be the particle alone: pixels of a solvent box that
+match D₂O start scattering in H₂O.
+
+**Overlays are unsmeared.** `plot_profile(data=...)` draws measured data,
+which is usually resolution-smeared, next to an unsmeared curve.
+
+**Reproducibility.** `save_analysis()` stores a computed curve's arrays and its
+`sinccity:` provenance line, which names the structure file, the first twelve
+characters of its SHA-256, the parameters, the kernel and `V_norm`, so the
+analysis reopens with `load_analysis(path)` alone. The file's `schema` block
+records the SincCity version. To keep the recipe for the curve itself,
+`gsc.get_settings()` returns a JSON record of the file path and SHA-256, the q
+grid, the parameters and the package versions, and
+`GenericScatteringCalculator.from_settings(settings)` rebuilds the calculator,
+warning if the file or the periodictable version changed.
+
+Console messages from the calculator go through IQuana's logger, so
+`iquana.set_verbosity('quiet')` silences them too.
+
+See `examples/structure_calculator_example.py` and
+`notebooks/structure_calculator.ipynb` for a complete walkthrough.
 
 ### Structure Factors
 

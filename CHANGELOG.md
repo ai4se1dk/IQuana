@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Generic Scattering Calculator.** `iquana.GenericScatteringCalculator` and
+  the `iquana.structure` module expose the
+  [SincCity](https://easyscience.github.io/SincCity/) package: I(q) of atoms
+  (PDB, GRO), pixels (SLD) or mesh cells (VTK) by the Debye formula, a 3D view
+  of the points, contrast series, and a settings record that replays a
+  calculation.
+  - `IQuana.set_data()`, `MultiFitter.add()` and
+    `IQuana.load_analysis(data=...)` accept a `ScatteringProfile` directly.
+  - The fit guard names the weighting and resolution to set for a computed
+    curve.
+  - `set_verbosity()` covers SincCity's messages, and anything that captures
+    the `iquana` logger receives them.
+  - Walkthroughs: `examples/structure_calculator_example.py` and
+    `notebooks/structure_calculator.ipynb`; example structures in
+    `examples/data/`.
+- `save_analysis()` writes the arrays of an in-memory dataset (a `data_ops`
+  result, a simulated or computed curve) into the analysis file, so
+  `load_analysis(path)` reopens it without `data=`. The `schema` block also
+  records the SincCity version.
+
+### Changed
+
+- `sinccity` and `periodictable` are required dependencies.
+- Analysis files are written as schema version 3. Version 1 and 2 files still
+  load; an IQuana 0.5 refuses a version 3 file with its "newer schema"
+  message.
+
 ## [0.5.0] - 2026-10-28
 
 This release fixes three silent fitting errors. Fits that use a structure
