@@ -26,7 +26,12 @@ from typing import Any
 
 import numpy as np
 
+from .view import is_2d, n_points
+
 _ARRAY_FIELDS = ('x', 'y', 'dy', 'dx', 'dxl', 'dxw')
+# 2D data: the file arrays only. The user's pixel selection is fitter state and
+# is fingerprinted separately, so a beam stop does not read as "data changed".
+_ARRAY_FIELDS_2D = ('qx_data', 'qy_data', 'data', 'err_data', 'dqx_data', 'dqy_data')
 
 
 def _hash_file(path: str) -> str | None:
@@ -48,9 +53,12 @@ def fingerprint_arrays(data: Any) -> str:
     resolution columns) plus the mask, each tagged by name so that moving
     values between columns changes the result. Absent columns contribute their
     name alone, so "no dx" and "dx of zeros" are distinguishable.
+
+    2D data hashes its own columns instead; the byte layout for 1D data is
+    unchanged, so fingerprints stored by earlier versions still match.
     """
     digest = hashlib.sha256()
-    for name in _ARRAY_FIELDS:
+    for name in _ARRAY_FIELDS_2D if is_2d(data) else _ARRAY_FIELDS:
         digest.update(name.encode())
         values = getattr(data, name, None)
         if values is None:
@@ -109,7 +117,7 @@ class DataSource:
         path = os.path.abspath(filename)
         return cls(
             kind='file',
-            n_points=int(np.asarray(data.x).size),
+            n_points=n_points(data),
             array_fingerprint=fingerprint_arrays(data),
             path=path,
             dataset_requested=requested,
@@ -129,7 +137,7 @@ class DataSource:
         )
         return cls(
             kind='memory',
-            n_points=int(np.asarray(data.x).size),
+            n_points=n_points(data),
             array_fingerprint=fingerprint_arrays(data),
             label=label,
             processes=describe_processes(data),

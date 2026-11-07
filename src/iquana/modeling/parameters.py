@@ -15,6 +15,7 @@ import numpy as np
 
 from ..console import ARROW, NO, YES
 from ..results import ParameterStateSnapshot
+from .magnetism import POLARIZATION_PARAMS, derive_magnetic_params, unsupported_reason
 from .polydispersity import PD_DISTRIBUTION_TYPES, PolydispersityManager
 from .structure_factor import (
     KERNEL_RADIUS_MODE_PARAM,
@@ -283,6 +284,17 @@ class ParameterManager:
         self._canonical_to_alias: dict[str, str] = {}
         self._shared_to_canonicals: dict[str, list[str]] = {}
 
+        # Magnetism: the registry of magnetic parameter entries, keyed like
+        # params. While enabled the *same dict objects* are also in params, so
+        # set_param and fitted values land in the registry and survive a
+        # disable/enable cycle. See modeling/magnetism.py.
+        self._magnetic: dict[str, dict[str, Any]] = {}
+        self._magnetic_enabled = False
+        self._magnetic_reason: str | None = None
+        # The beam preset last applied, 'custom' once up_frac_* were set by
+        # hand, None while they still hold the sasmodels defaults.
+        self._magnetic_beam: str | None = None
+
     @property
     def _structure_factor_name(self) -> str | None:
         return self._sf_manager.name
@@ -383,6 +395,9 @@ class ParameterManager:
             # Track polydisperse parameters
             if getattr(param, 'polydisperse', False):
                 self._polydisperse_param_names.append(param.name)
+
+        self._magnetic = derive_magnetic_params(kernel)
+        self._magnetic_reason = unsupported_reason(kernel)
 
         # Add implicit scale and background parameters (present in all models)
         if 'scale' not in self.params:
@@ -552,6 +567,11 @@ class ParameterManager:
             return name
         if name in self._canonical_to_alias:
             return self._canonical_to_alias[name]
+        if name in self._magnetic:
+            raise KeyError(
+                f"'{name}' is a magnetic parameter: call enable_magnetism() with 2D data "
+                'loaded to fit it.'
+            )
         available = ', '.join(self.params.keys())
         raise KeyError(f"Parameter '{name}' not found. Available: {available}")
 
@@ -703,9 +723,14 @@ class ParameterManager:
         # Longest-prefix-first so nested combined prefixes (e.g. 'AB') win.
         comps = sorted(new_components, key=lambda c: len(c[0]), reverse=True)
 
+        # Magnetic parameters are aliased (and may be shared) even while
+        # hidden, so enabling magnetism later exposes them under alias names.
+        pool = {name: info for name, info in self.params.items() if name not in self._magnetic}
+        pool.update(self._magnetic)
+
         alias_to_canonical: dict[str, str] = {}
         canonical_to_alias: dict[str, str] = {}
-        for canonical in self.params.keys():
+        for canonical in pool:
             matched = None
             for prefix, moniker, _part_name in comps:
                 if prefix and canonical.startswith(prefix + '_'):
@@ -730,7 +755,7 @@ class ParameterManager:
         # Such shadowing makes name resolution ambiguous and would cross-wire
         # fitted values between components.
         for alias, canonical in alias_to_canonical.items():
-            if alias in self.params and alias != canonical:
+            if alias in pool and alias != canonical:
                 raise ValueError(
                     f"Component moniker produces the alias '{alias}', which shadows "
                     f"the canonical parameter '{alias}' of another component "
@@ -744,14 +769,14 @@ class ParameterManager:
             canonicals = []
             for prefix, _moniker, _part_name in new_components:
                 candidate = f'{prefix}_{shared_name}' if prefix else shared_name
-                if candidate in self.params:
+                if candidate in pool:
                     canonicals.append(candidate)
             if len(canonicals) < 2:
                 per_component = '; '.join(
                     f'{moniker}: '
                     + ', '.join(
                         name[len(prefix) + 1 :]
-                        for name in self.params
+                        for name in pool
                         if prefix and name.startswith(prefix + '_')
                     )
                     for prefix, moniker, _part in new_components
@@ -771,26 +796,32 @@ class ParameterManager:
             if canonical not in canonical_to_alias:
                 canonical_to_alias[canonical] = alias
 
-        # Re-key the user-facing params dict to alias names.
+        # Re-key the user-facing params dict (and the magnetic registry) to
+        # alias names.
         new_params: dict[str, dict[str, Any]] = {}
+        new_magnetic: dict[str, dict[str, Any]] = {}
         shared_canonical_set = {
             canonical for canonicals in shared_to_canonicals.values() for canonical in canonicals
         }
-        for canonical, info in self.params.items():
+        for canonical, info in pool.items():
+            target = new_magnetic if canonical in self._magnetic else new_params
             if canonical not in alias_to_canonical.values():
-                new_params[canonical] = info  # global scale/background
+                target[canonical] = info  # global scale/background/up_*
                 continue
             if canonical in shared_canonical_set:
                 # The prefixed alias of a shared parameter is suppressed: only
                 # the shared name appears in the user-facing params dict.
                 shared_name = canonical_to_alias[canonical]
                 if shared_to_canonicals[shared_name][0] == canonical:
-                    new_params[shared_name] = info
+                    target[shared_name] = info
             else:
-                new_params[canonical_to_alias[canonical]] = info
+                target[canonical_to_alias[canonical]] = info
 
         self._components = new_components
         self.params = new_params
+        self._magnetic = new_magnetic
+        if self._magnetic_enabled:
+            self.params.update(new_magnetic)
         self._alias_to_canonical = alias_to_canonical
         self._canonical_to_alias = canonical_to_alias
         self._shared_to_canonicals = shared_to_canonicals
@@ -853,6 +884,8 @@ class ParameterManager:
 
         if value is not None:
             self.params[resolved]['value'] = value
+            if resolved in ('up_frac_i', 'up_frac_f'):
+                self._magnetic_beam = 'custom'
             # Propagate to equality-link followers of this parameter. In
             # link_radius mode 'radius_effective' is one of them, so the
             # structure-factor link needs no special case here.
@@ -897,7 +930,10 @@ class ParameterManager:
         print(f'{"=" * 80}')
 
         if not self._components:
-            self._print_param_table(self.params)
+            self._print_param_table(
+                {name: info for name, info in self.params.items() if name not in self._magnetic}
+            )
+            self._print_magnetic_block()
             print(f'{"=" * 80}\n')
             return
 
@@ -926,7 +962,7 @@ class ParameterManager:
         if shared_names:
             print('Shared:')
             for name in sorted(shared_names):
-                if name in self.params:
+                if name in self.params and name not in self._magnetic:
                     print('  ' + entry_line(name, self.params[name]))
         # Assign each parameter to the component with the longest matching
         # moniker prefix, so 'sphere_big_radius' files under a 'sphere_big'
@@ -945,7 +981,7 @@ class ParameterManager:
             label = moniker if moniker == part_name else f'{moniker} ({part_name})'
             print(f'{label}:')
             for name, info in self.params.items():
-                if name in global_names or name in shared_names:
+                if name in global_names or name in shared_names or name in self._magnetic:
                     continue
                 # Moniker alone covers both paths: params are keyed by alias
                 # after register_aliases, and moniker == prefix on the raw
@@ -953,12 +989,23 @@ class ParameterManager:
                 # params when one component's moniker equals another's prefix.
                 if owning_moniker(name) == moniker:
                     print('  ' + entry_line(name, info))
+        self._print_magnetic_block()
         print(f'{"=" * 80}\n')
 
-    def _print_param_table(self, params: dict[str, dict[str, Any]]) -> None:
+    def _print_magnetic_block(self) -> None:
+        """The exposed magnetic parameters, polarisation first."""
+        if not self._magnetic_enabled:
+            return
+        beam = f' (beam: {self._magnetic_beam})' if self._magnetic_beam else ''
+        print(f'Magnetic{beam}:')
+        names = sorted(self._magnetic, key=lambda name: name not in POLARIZATION_PARAMS)
+        self._print_param_table({name: self.params[name] for name in names}, header=False)
+
+    def _print_param_table(self, params: dict[str, dict[str, Any]], header: bool = True) -> None:
         """Print a flat parameter table (atomic models)."""
-        print(f'{"Parameter":<20} {"Value":<12} {"Min":<12} {"Max":<12} {"Vary":<8}')
-        print(f'{"-" * 80}')
+        if header:
+            print(f'{"Parameter":<20} {"Value":<12} {"Min":<12} {"Max":<12} {"Vary":<8}')
+            print(f'{"-" * 80}')
         for name, info in params.items():
             vary_str = YES if info['vary'] else NO
             # Show linked indicator for radius_effective in link_radius mode
@@ -1018,12 +1065,20 @@ class ParameterManager:
         if not self._backed_up_pd_state:
             self.backup_pd_state()
         previous_mode = self._radius_effective_mode
+        exposed = self._hide_magnetic()
         self.params = self._sf_manager.apply(
             kernel=kernel,
             sf_name=structure_factor_name,
             re_mode=radius_effective_mode,
             current_params=self.params,
         )
+        # The product kernel keeps the form factor's magnetic names; carry the
+        # entries over so their values survive.
+        derived = derive_magnetic_params(kernel)
+        self._magnetic = {name: self._magnetic.get(name, info) for name, info in derived.items()}
+        self._magnetic_reason = unsupported_reason(kernel)
+        if exposed:
+            self._show_magnetic()
         # radius_effective_mode owns the 'radius_effective' -> 'radius' link:
         # drop the outgoing mode's link before the incoming mode re-establishes
         # it, so switching modes cannot leave a phantom behind. Dropping it here
@@ -1049,8 +1104,11 @@ class ParameterManager:
             ValueError: If no structure factor is currently set
         """
         was_linked = self._radius_effective_mode == 'link_radius'
+        exposed = self._hide_magnetic()
         sf_name, restored_params = self._sf_manager.remove()
         self.params = restored_params
+        if exposed:
+            self._show_magnetic()
         # The mode-owned link retires with the structure factor that created
         # it; a link the user made themselves is left to _prune_stale_links(),
         # which reports it.
@@ -1383,7 +1441,11 @@ class ParameterManager:
                     for name, info in self._sf_manager.backed_up_params.items()
                 },
             },
-            'params': {name: _normalized_param(info) for name, info in self.params.items()},
+            'params': {
+                name: _normalized_param(info)
+                for name, info in self.params.items()
+                if name not in self._magnetic
+            },
             'polydispersity': {
                 'enabled': self._pd_manager.is_enabled(),
                 'params': {
@@ -1392,6 +1454,22 @@ class ParameterManager:
                 'backup': self._export_pd_backup(),
             },
             'links': dict(self._links),
+            # Only while enabled, so the configuration (and its digest) of
+            # every non-magnetic analysis is exactly what it was before
+            # magnetism existed.
+            **(
+                {
+                    'magnetism': {
+                        'enabled': True,
+                        'beam': self._magnetic_beam,
+                        'params': {
+                            name: _normalized_param(info) for name, info in self._magnetic.items()
+                        },
+                    }
+                }
+                if self._magnetic_enabled
+                else {}
+            ),
         }
 
     def _export_pd_backup(self) -> dict[str, Any] | None:
@@ -1425,7 +1503,7 @@ class ParameterManager:
                 or the link set contradicts ``radius_effective_mode``.
         """
         params_cfg = _require_mapping(config, 'params')
-        expected = set(self.params)
+        expected = {name for name in self.params if name not in self._magnetic}
         got = set(params_cfg)
         if got != expected:
             missing = ', '.join(sorted(expected - got)) or 'none'
@@ -1453,7 +1531,23 @@ class ParameterManager:
         for name, saved in pd_params_cfg.items():
             new_pd[name] = dict(new_pd.get(name, {})) | _validated_pd(name, saved)
 
-        new_links = _validated_links(config.get('links') or {}, new_params)
+        magnetism_cfg = _require_mapping(config, 'magnetism', default={})
+        magnetic_enabled = bool(magnetism_cfg.get('enabled', False))
+        new_magnetic = {name: dict(info) for name, info in self._magnetic.items()}
+        if magnetic_enabled:
+            saved = _require_mapping(magnetism_cfg, 'params')
+            if set(saved) != set(self._magnetic):
+                raise ValueError(
+                    'Saved magnetic parameters do not match the model: '
+                    f'missing {sorted(set(self._magnetic) - set(saved)) or "none"}, '
+                    f'unknown {sorted(set(saved) - set(self._magnetic)) or "none"}.'
+                )
+            for name, info in saved.items():
+                new_magnetic[name] |= _validated_param(name, info)
+        # One namespace for links: followers and targets may be magnetic.
+        combined = {**new_params, **(new_magnetic if magnetic_enabled else {})}
+
+        new_links = _validated_links(config.get('links') or {}, combined)
         mode = self._radius_effective_mode
         if mode == 'link_radius' and new_links.get('radius_effective') != 'radius':
             raise ValueError(
@@ -1473,13 +1567,18 @@ class ParameterManager:
 
         # Followers always carry their target's value, whatever the file says.
         for follower, target in new_links.items():
-            new_params[follower]['value'] = new_params[target]['value']
-            new_params[follower]['vary'] = False
+            combined[follower]['value'] = combined[target]['value']
+            combined[follower]['vary'] = False
 
         self._enforce_kernel_radius_mode(new_params)
 
         # Commit.
         self.params = new_params
+        self._magnetic = new_magnetic
+        self._magnetic_enabled = False
+        if magnetic_enabled:
+            self._show_magnetic()
+            self._magnetic_beam = magnetism_cfg.get('beam')
         self._links = new_links
         self._pd_manager.params = new_pd
         # Restored as state, not as the user's choice: files written before 0.5
@@ -1536,3 +1635,74 @@ class ParameterManager:
 
         # Reset polydispersity state
         self._pd_manager.clear()
+
+        self._magnetic = {}
+        self._magnetic_enabled = False
+        self._magnetic_reason = None
+        self._magnetic_beam = None
+
+    # =========================================================================
+    # Magnetism
+    # =========================================================================
+
+    def magnetism_unsupported_reason(self) -> str | None:
+        """Why the current model cannot use magnetism, or None when it can."""
+        return self._magnetic_reason
+
+    def magnetic_parameter_names(self) -> list[str]:
+        """User-facing names of the model's magnetic parameters, exposed or not."""
+        return list(self._magnetic)
+
+    def is_magnetism_enabled(self) -> bool:
+        return self._magnetic_enabled
+
+    def magnetic_beam(self) -> str | None:
+        return self._magnetic_beam
+
+    def set_magnetism_enabled(self, enabled: bool) -> None:
+        """Expose or hide the magnetic parameters.
+
+        Hiding keeps their values, but drops every link that involves one
+        (with a warning): a link to a parameter that is not in the model would
+        otherwise reach the engines.
+        """
+        if enabled == self._magnetic_enabled:
+            return
+        if enabled:
+            if not self._magnetic:
+                raise ValueError(
+                    f"Model '{self.model_name}' cannot use magnetism: {self._magnetic_reason}."
+                )
+            self._show_magnetic()
+            return
+        dropped = [
+            follower
+            for follower, target in self._links.items()
+            if follower in self._magnetic or target in self._magnetic
+        ]
+        for follower in dropped:
+            target = self._links.pop(follower)
+            warnings.warn(
+                f"Removed parameter link '{follower}' -> '{target}' because magnetism was "
+                'disabled.',
+                stacklevel=3,
+            )
+        self._hide_magnetic()
+
+    def set_magnetic_beam(self, beam: str, up_frac_i: float, up_frac_f: float) -> None:
+        """Apply a beam preset's spin fractions and remember its name."""
+        self.set_param('up_frac_i', value=up_frac_i)
+        self.set_param('up_frac_f', value=up_frac_f)
+        self._magnetic_beam = beam
+
+    def _show_magnetic(self) -> None:
+        self.params.update(self._magnetic)
+        self._magnetic_enabled = True
+
+    def _hide_magnetic(self) -> bool:
+        """Remove the magnetic entries from params; return whether they were shown."""
+        exposed = self._magnetic_enabled
+        for name in self._magnetic:
+            self.params.pop(name, None)
+        self._magnetic_enabled = False
+        return exposed

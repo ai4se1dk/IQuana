@@ -43,12 +43,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from sasdata.dataloader.data_info import Data1D
+from sasdata.dataloader.data_info import Data1D, Data2D
 from sasmodels.core import load_model
 from sasmodels.direct_model import DirectModel
 
 from .data.loader import has_real_data, load_sans_data, normalize_sans_data, validate_q_grid
+from .data.view import is_2d, uncertainty
 from .fitter import IQuana
+from .fitting.theory import evaluate_theory, scatter_to_full_length, theory_data_2d
+from .modeling.magnetism import beam_fractions
 from .modeling.polydispersity import PD_DEFAULTS
 
 __all__ = [
@@ -60,13 +63,14 @@ __all__ = [
     'load',
     'load_fitter',
     'simulate',
+    'simulate_2d',
     'simulate_pair',
 ]
 
 # Package and subdirectory holding the bundled files. Kept as constants so the
 # error message in _example_dir() can name them.
 _DATA_PACKAGE = 'sasdata'
-_DATA_SUBDIR = ('example_data', '1d_data')
+_DATA_ROOT = 'example_data'
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,13 @@ class Example:
             known difficulties. Empty when there are none.
         tags: Free-form labels for filtering with :func:`list_examples`.
         source: Provenance note.
+        directory: Subdirectory of sasdata's ``example_data`` holding the file.
+        mask_ring: 2D only: a beam-stop radius in 1/A, excluded with
+            :meth:`IQuana.mask_ring`.
+        mask_invalid: 2D only: exclude pixels with dI = 0
+            (:meth:`IQuana.mask_invalid`).
+        beam: 2D only: enable magnetism with this beam preset
+            (:meth:`IQuana.enable_magnetism`).
     """
 
     name: str
@@ -104,12 +115,101 @@ class Example:
     notes: str = ''
     tags: tuple[str, ...] = ()
     source: str = 'sasdata example_data'
+    directory: str = '1d_data'
+    mask_ring: float | None = None
+    mask_invalid: bool = False
+    beam: str | None = None
+
+
+_S50_NOTE = (
+    'Shipped as data access with a beam preset only: the sample, model and '
+    'reference values have not been confirmed, so the suggested parameters are '
+    'a starting point, not a published result.'
+)
+
+
+def _sanspol(name: str, filename: str, beam: str, which: str) -> Example:
+    return Example(
+        name=name,
+        filename=filename,
+        model='sphere',
+        description=(
+            f'Measured polarised SANS (SANSPOL) of magnetic nanoparticles in a '
+            f"horizontal field, {which}, from SasView's magnetism tutorial. "
+            'Irregular 2D pixel grid.'
+        ),
+        params={
+            'scale': {'value': 0.002, 'min': 1e-6, 'max': 1.0, 'vary': True},
+            'background': {'value': 0.1, 'min': 0.0, 'max': 5.0, 'vary': True},
+            'radius': {'value': 70.0, 'min': 10.0, 'max': 200.0, 'vary': True},
+            'sld': {'value': 6.0, 'vary': False},
+            'sld_solvent': {'value': 1.0, 'vary': False},
+            # Magnetisation along the (horizontal) field, in the detector plane.
+            'sld_mtheta': {'value': 90.0, 'vary': False},
+            'sld_M0': {'value': 1.0, 'min': 0.01, 'max': 5.0, 'vary': True},
+        },
+        notes=_S50_NOTE,
+        tags=('measured', '2d', 'magnetic'),
+        directory='magnetic_data',
+        mask_ring=0.008,
+        beam=beam,
+    )
 
 
 # Starting values below are deliberately coarse: they put the model in the right
 # basin so a fit converges, they are not published results. Only entries with a
 # populated `truth` have parameters that are known rather than guessed.
 _REGISTRY: dict[str, Example] = {
+    'p123_2d': Example(
+        name='p123_2d',
+        filename='P123_D2O_10_percent.dat',
+        model='sphere',
+        description=(
+            'Measured 10% Pluronic P123 micelles in D2O as a 2D detector image '
+            '(100 x 100 pixels). Isotropic, with a structure-factor peak; 33 '
+            'pixels have zero intensity and zero dI, so the preset excludes '
+            'them along with the beam stop.'
+        ),
+        params={
+            'scale': {'value': 0.05, 'min': 1e-6, 'max': 10.0, 'vary': True},
+            'background': {'value': 0.5, 'min': 0.0, 'max': 10.0, 'vary': True},
+            'sld': {'value': 0.4, 'vary': False},
+            'sld_solvent': {'value': 6.4, 'vary': False},
+            'radius': {'value': 50.0, 'min': 10.0, 'max': 200.0, 'vary': True},
+            'radius_effective': {'value': 60.0, 'min': 10.0, 'max': 300.0, 'vary': True},
+            'volfraction': {'value': 0.2, 'min': 0.0, 'max': 0.6, 'vary': True},
+        },
+        structure_factor='hardsphere',
+        tags=('measured', '2d', 'micelles', 'structure-factor'),
+        directory='2d_data',
+        mask_ring=0.006,
+        mask_invalid=True,
+    ),
+    'sans2d_2d': Example(
+        name='sans2d_2d',
+        filename='33837rear_2D_1.75_16.5_NXcanSAS.h5',
+        model='sphere',
+        description=(
+            'Measured SANS2D detector image as NXcanSAS HDF5 (150 x 150 pixels), '
+            'the 2D counterpart of the canSAS_xml example. 105 pixels have zero '
+            'dI and are excluded by the preset.'
+        ),
+        params={
+            'scale': {'value': 0.01, 'min': 1e-6, 'max': 10.0, 'vary': True},
+            'background': {'value': 0.1, 'min': 0.0, 'max': 10.0, 'vary': True},
+            'radius': {'value': 50.0, 'min': 5.0, 'max': 500.0, 'vary': True},
+        },
+        tags=('measured', '2d'),
+        directory='2d_data',
+        mask_invalid=True,
+    ),
+    'sanspol_plus': _sanspol('sanspol_plus', 'S50_I+_2D.dat', 'sanspol+', 'spin-up incident beam'),
+    'sanspol_minus': _sanspol(
+        'sanspol_minus', 'S50_I-_2D.dat', 'sanspol-', 'spin-down incident beam'
+    ),
+    'sanspol_unpol': _sanspol(
+        'sanspol_unpol', 'S50_unpol_2D.dat', 'unpolarised', 'unpolarised beam'
+    ),
     'cylinder': Example(
         name='cylinder',
         filename='cyl_400_20.txt',
@@ -361,8 +461,8 @@ _REGISTRY: dict[str, Example] = {
 # =============================================================================
 
 
-def _example_dir():
-    """Return the sasdata 1D example directory as a ``Traversable``.
+def _example_dir(subdirectory: str = '1d_data'):
+    """Return a sasdata example directory as a ``Traversable``.
 
     Raises:
         FileNotFoundError: If sasdata is installed without its example data, or
@@ -372,7 +472,7 @@ def _example_dir():
     from importlib.resources import files as _files
 
     try:
-        directory = _files(_DATA_PACKAGE).joinpath(*_DATA_SUBDIR)
+        directory = _files(_DATA_PACKAGE).joinpath(_DATA_ROOT, subdirectory)
     except ModuleNotFoundError as exc:  # pragma: no cover - sasdata is a hard dependency
         raise FileNotFoundError(
             f'The {_DATA_PACKAGE} package is not importable, so the bundled '
@@ -381,7 +481,7 @@ def _example_dir():
         ) from exc
 
     if not directory.is_dir():
-        expected = '/'.join((_DATA_PACKAGE,) + _DATA_SUBDIR)
+        expected = '/'.join((_DATA_PACKAGE, _DATA_ROOT, subdirectory))
         raise FileNotFoundError(
             f'Expected the bundled example datasets at "{expected}" inside the '
             f'installed sasdata package, but that directory does not exist '
@@ -432,7 +532,7 @@ def example_path(name: str) -> str:
         FileNotFoundError: If the file is missing from the sasdata install.
     """
     example = get_example(name)
-    path = _example_dir() / example.filename
+    path = _example_dir(example.directory) / example.filename
     if not path.is_file():
         raise FileNotFoundError(
             f"Example '{name}' expects the file '{example.filename}' in the "
@@ -442,8 +542,8 @@ def example_path(name: str) -> str:
     return str(path)
 
 
-def load(name: str) -> Data1D:
-    """Load a bundled example dataset and return a fit-ready ``Data1D``.
+def load(name: str) -> Data1D | Data2D:
+    """Load a bundled example dataset: a fit-ready ``Data1D``, or a ``Data2D``.
 
     Goes through the same loader as :meth:`IQuana.load_data`, so the result
     behaves identically to any dataset you load yourself.
@@ -496,6 +596,10 @@ def load_fitter(name: str, quiet: bool = True) -> IQuana:
         if example.structure_factor is not None:
             fitter.set_structure_factor(example.structure_factor)
 
+        # Before the parameters, so a preset can configure magnetic ones.
+        if example.beam is not None:
+            fitter.enable_magnetism(beam=example.beam)
+
         for param_name, settings in example.params.items():
             fitter.set_param(param_name, **settings)
 
@@ -503,6 +607,11 @@ def load_fitter(name: str, quiet: bool = True) -> IQuana:
             fitter.enable_polydispersity(True)
             for param_name, settings in example.polydispersity.items():
                 fitter.set_pd_param(param_name, **settings)
+
+        if example.mask_ring is not None:
+            fitter.mask_ring(qmax=example.mask_ring)
+        if example.mask_invalid:
+            fitter.mask_invalid()
 
     return fitter
 
@@ -569,10 +678,19 @@ def _describe_one(example: Example) -> None:
         print(f'  [could not read the file: {exc}]')
         return
 
-    print(f'  points            {len(data.x)}')
-    print(f'  Q range           {data.qmin:.5g} to {data.qmax:.5g} 1/A')
-    print(f'  dI column         {"yes" if has_real_data(data.dy) else "no"}')
-    print(f'  dQ column         {"yes" if has_real_data(data.dx) else "no"}')
+    if is_2d(data):
+        q = np.hypot(data.qx_data, data.qy_data)
+        print(f'  pixels            {q.size} (2D)')
+        print(f'  |Q| range         {q.min():.5g} to {q.max():.5g} 1/A')
+        print(f'  dI column         {"yes" if has_real_data(uncertainty(data)) else "no"}')
+        print(f'  dI = 0 pixels     {int(np.sum(uncertainty(data) == 0))}')
+        if example.beam:
+            print(f'  beam              {example.beam}')
+    else:
+        print(f'  points            {len(data.x)}')
+        print(f'  Q range           {data.qmin:.5g} to {data.qmax:.5g} 1/A')
+        print(f'  dI column         {"yes" if has_real_data(data.dy) else "no"}')
+        print(f'  dQ column         {"yes" if has_real_data(data.dx) else "no"}')
 
     print()
     print('  suggested starting parameters:')
@@ -621,9 +739,35 @@ class _maybe_silenced:
 # =============================================================================
 
 
-def _model_defaults(kernel) -> dict[str, float]:
-    """Return the sasmodels default value for every callable parameter."""
-    return {p.name: p.default for p in kernel.info.parameters.call_parameters}
+def _model_defaults(kernel, magnetic: bool = False) -> dict[str, float]:
+    """Return the sasmodels default of every call parameter.
+
+    Magnetic parameters are included only when asked for: sasmodels ignores
+    them for 1D data, so a 1D simulation must not accept (or record) them.
+    """
+    return {
+        p.name: p.default
+        for p in kernel.info.parameters.call_parameters
+        if magnetic or p.type != 'magnetic'
+    }
+
+
+def _check_params(model: str, kernel, params: dict[str, Any], defaults: dict[str, float]) -> None:
+    unknown = [
+        key for key in params if key not in defaults and not _is_polydispersity_key(key, defaults)
+    ]
+    if not unknown:
+        return
+    magnetic = set(_model_defaults(kernel, magnetic=True)) - set(defaults)
+    hint = (
+        ' Magnetic parameters affect 2D data only; use simulate_2d().'
+        if magnetic & set(unknown)
+        else ''
+    )
+    raise ValueError(
+        f'Parameter(s) {", ".join(sorted(unknown))} are not valid for model '
+        f"'{model}'.{hint} Valid parameters: {', '.join(sorted(defaults))}."
+    )
 
 
 def simulate(
@@ -702,14 +846,7 @@ def simulate(
         raise ValueError(f"Failed to load model '{model}': {exc}") from exc
 
     defaults = _model_defaults(kernel)
-    unknown = [
-        key for key in params if key not in defaults and not _is_polydispersity_key(key, defaults)
-    ]
-    if unknown:
-        raise ValueError(
-            f'Parameter(s) {", ".join(sorted(unknown))} are not valid for model '
-            f"'{model}'. Valid parameters: {', '.join(sorted(defaults))}."
-        )
+    _check_params(model, kernel, params, defaults)
 
     params = _complete_polydispersity(params)
 
@@ -734,6 +871,105 @@ def simulate(
     # what the caller happened to pass.
     data.truth = {**defaults, **params}
     data.filename = f'simulated_{model}'
+    return data
+
+
+def simulate_2d(
+    model: str = 'sphere',
+    qmax: float = 0.2,
+    npixels: int = 64,
+    noise: float = 0.02,
+    seed: int | None = 0,
+    dq: float | None = None,
+    beam: str | None = None,
+    **params: Any,
+) -> Data2D:
+    """Simulate a 2D detector image from any sasmodels model, with known truth.
+
+    The 2D counterpart of :func:`simulate`, and the place to try magnetic
+    models: magnetic parameters (``sld_M0``, ``sld_mtheta``, ``up_frac_i``,
+    ...) are accepted here and recorded in ``data.truth``.
+
+    Args:
+        model: sasmodels model name or expression.
+        qmax: The image spans -qmax to qmax in both qx and qy, in 1/A.
+        npixels: Pixels along each axis; the image has ``npixels**2`` pixels.
+            The pixel at |Q| = 0 (odd *npixels*) has no intensity (NaN) and
+            is never fitted.
+        noise: Relative noise level, with the counting-statistics model of
+            :func:`simulate`. ``0`` gives noise-free data without dI.
+        seed: Seed for the noise.
+        dq: Relative pinhole width σ_q/q, applied isotropically (radial and
+            azimuthal widths both ``dq·|Q|``). The simulated intensity is
+            smeared accordingly and the widths are attached.
+        beam: A beam preset of :meth:`IQuana.enable_magnetism`
+            (``'unpolarised'``, ``'sanspol+'``, ...) that sets ``up_frac_i``
+            and ``up_frac_f``. Do not pass those as well.
+        **params: Model parameters; anything unspecified keeps its sasmodels
+            default.
+
+    Returns:
+        A sasdata ``Data2D`` (all pixels included by its mask, regular
+        ``x_bins``/``y_bins``) with an extra ``truth`` attribute.
+
+    Raises:
+        ValueError: For an unknown model or parameter, a bad grid, or a beam
+            preset together with explicit spin fractions.
+
+    Example:
+        >>> data = simulate_2d('sphere', radius=60, sld_M0=1.5, sld_mtheta=90,
+        ...                    beam='sanspol+')
+        >>> data.truth['sld_M0']
+        1.5
+    """
+    if not np.isfinite(qmax) or qmax <= 0:
+        raise ValueError(f'qmax must be positive and finite, got {qmax}.')
+    if int(npixels) != npixels or npixels < 2:
+        raise ValueError(f'npixels must be an integer of at least 2, got {npixels}.')
+    if not np.isfinite(noise) or noise < 0:
+        raise ValueError(f'noise must be non-negative and finite, got {noise}.')
+    try:
+        kernel = load_model(model, dtype='single', platform='dll')
+    except Exception as exc:
+        raise ValueError(f"Failed to load model '{model}': {exc}") from exc
+
+    defaults = _model_defaults(kernel, magnetic=True)
+    _check_params(model, kernel, params, defaults)
+    if beam is not None:
+        if {'up_frac_i', 'up_frac_f'} & set(params):
+            raise ValueError('Pass either beam= or up_frac_i/up_frac_f, not both.')
+        if 'up_frac_i' not in defaults:
+            raise ValueError(
+                f"Model '{model}' has no magnetic parameters, so beam= does not apply."
+            )
+        params['up_frac_i'], params['up_frac_f'] = beam_fractions(beam)
+    params = _complete_polydispersity(params)
+
+    axis = np.linspace(-qmax, qmax, int(npixels))
+    qx, qy = (grid.ravel() for grid in np.meshgrid(axis, axis))
+    template = theory_data_2d(qx, qy, dq)
+    curve, index = evaluate_theory(template, kernel, params)
+    intensity = scatter_to_full_length(curve, index)
+
+    uncertainty_values = np.zeros_like(intensity)
+    finite = np.isfinite(intensity)
+    intensity[finite], uncertainty_values[finite] = _apply_noise(intensity[finite], noise, seed)
+    uncertainty_values[~finite] = np.nan
+
+    data = Data2D(
+        data=intensity,
+        err_data=None if noise == 0 else uncertainty_values,
+        qx_data=qx,
+        qy_data=qy,
+        q_data=np.hypot(qx, qy),
+        mask=np.ones(qx.size, dtype=bool),
+        dqx_data=template.dqx_data,
+        dqy_data=template.dqy_data,
+    )
+    # Set after construction: sasdata's plottable_2D swaps and truth-tests them.
+    data.x_bins, data.y_bins = axis, axis.copy()
+    data.truth = {**defaults, **params}
+    data.filename = f'simulated_2d_{model}'
     return data
 
 

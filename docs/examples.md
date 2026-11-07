@@ -36,6 +36,9 @@ sync with sasdata.
 | `protein` | sphere | Measured apoferritin: ~400 points, flat incoherent background, noisy high-Q tail. |
 | `canSAS_xml` | sphere | Measured SANS2D data as canSAS-1D XML. |
 | `nxcanSAS_h5` | sphere | The identical measurement as NXcanSAS HDF5. |
+| `p123_2d` | sphere@hardsphere | 2D: P123 micelles as a 100 x 100 detector image. The preset masks the beam stop and the 33 zero-dI pixels. |
+| `sans2d_2d` | sphere | 2D: a SANS2D detector image as NXcanSAS HDF5; the preset masks its 105 zero-dI pixels. |
+| `sanspol_plus`, `sanspol_minus`, `sanspol_unpol` | sphere | 2D, magnetic: polarised SANS of nanoparticles in a field (SasView's magnetism tutorial), with a beam preset. Data access only: the model and values are a starting point, not a confirmed result. |
 
 Filter by tag to find one of a given kind:
 
@@ -117,6 +120,22 @@ examples.simulate('sphere', radius=50, radius_pd=0.15)
 real = examples.load('silica_spheres')
 examples.simulate('sphere', radius=100, q=real.x)
 ```
+
+### 2D and magnetic data
+
+`simulate_2d()` computes a square detector image and accepts magnetic
+parameters, which have no effect on 1D data (`simulate()` rejects them):
+
+```python
+data = examples.simulate_2d('sphere', qmax=0.15, npixels=64, noise=0.02,
+                            radius=60, sld_M0=1.5, sld_mtheta=90,
+                            beam='sanspol+')
+data.truth['sld_M0']    # 1.5
+```
+
+The image spans -qmax to qmax in qx and qy. With an odd `npixels` the pixel at
+|Q| = 0 has no intensity and is never fitted. `dq` smears isotropically;
+`beam` takes the presets of `IQuana.enable_magnetism()`.
 
 ### How the noise is generated
 

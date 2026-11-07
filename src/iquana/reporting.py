@@ -128,7 +128,17 @@ def _settings_rows(fitter: Any) -> list[tuple[str, str]]:
         suffix = (
             '' if (qmin, qmax) == full else f' (restricted from {full[0]:.4g} to {full[1]:.4g})'
         )
-        rows.append(('Q range', f'{qmin:.4g} to {qmax:.4g} 1/A{suffix}'))
+        label = '|Q| range' if fitter.is_2d else 'Q range'
+        rows.append((label, f'{qmin:.4g} to {qmax:.4g} 1/A{suffix}'))
+    if fitter.is_2d:
+        mask = fitter.get_mask()
+        rows.append(
+            (
+                'Selection',
+                f'2D, {mask["fitted"]} of {mask["pixels"]} pixels fitted '
+                f'({mask["file"]} excluded by the file, {mask["user"]} by masks)',
+            )
+        )
 
     from .data.resolution import ResolutionSetting
     from .data.weighting import WeightingSetting
@@ -186,6 +196,15 @@ def _settings_rows(fitter: Any) -> list[tuple[str, str]]:
     links = fitter.get_links()
     if links:
         rows.append(('Links', ', '.join(f'{a} = {b}' for a, b in links.items())))
+
+    if fitter.is_magnetism_enabled():
+        beam = fitter._param_manager.magnetic_beam() or 'sasmodels defaults'
+        amplitudes = ', '.join(
+            f'{name} = {fitter.params[name]["value"]:.4g}'
+            for name in fitter.get_magnetic_parameters()
+            if name.endswith('_M0')
+        )
+        rows.append(('Magnetism', f'on ({beam}): {amplitudes}'))
 
     if fitter.supports_polydispersity():
         enabled = fitter.is_polydispersity_enabled()

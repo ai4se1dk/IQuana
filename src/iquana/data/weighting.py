@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from ..console import SIGMA, SQRT
+from .view import intensity, is_2d, set_uncertainty, uncertainty
 
 #: The four weighting modes, mirroring SasView's Fit Page.
 WEIGHTING_MODES = ('dI', 'sqrt', 'abs', 'none')
@@ -153,6 +154,8 @@ def apply_weighting(data: Any, setting: WeightingSetting, *, copy: bool = True) 
             because it hands over the fresh copy ``apply_resolution`` just
             made, which nobody else holds.
 
+    For 2D data the same rules apply to ``err_data`` and ``data``.
+
     Returns:
         A ``Data1D`` whose ``dy`` is the file's own column under ``'dI'``, or
         the full-length sigma of the mode otherwise. A missing column
@@ -166,9 +169,10 @@ def apply_weighting(data: Any, setting: WeightingSetting, *, copy: bool = True) 
     """
     weighted = deepcopy(data) if copy else data
     if setting.mode == 'dI' or getattr(weighted, 'isSesans', False):
-        missing = weighted.dy is None or np.asarray(weighted.dy).size == 0
-        if missing and weighted.y is not None:
-            weighted.dy = np.zeros_like(np.asarray(weighted.y, dtype=float))
+        sigma = uncertainty(weighted)
+        values = weighted.data if is_2d(weighted) else weighted.y
+        if (sigma is None or sigma.size == 0) and values is not None:
+            set_uncertainty(weighted, np.zeros_like(np.asarray(values, dtype=float)))
         return weighted
-    weighted.dy = weighting_sigma(weighted.y, setting.mode)
+    set_uncertainty(weighted, weighting_sigma(intensity(weighted), setting.mode))
     return weighted

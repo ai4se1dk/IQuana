@@ -12,7 +12,7 @@ from iquana import IQuana
 
 # Initialize the fitter and load data
 fitter = IQuana()
-fitter.load_data('simulated_sans_data.csv')
+fitter.load_data('tests/data/simulated_sans_data.csv')
 
 # Set up a cylinder model
 fitter.set_model('cylinder')

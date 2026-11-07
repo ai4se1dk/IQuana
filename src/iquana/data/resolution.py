@@ -35,6 +35,13 @@ Two consequences drive the rules in :func:`apply_resolution`:
 Widths follow sasmodels' own convention: ``dx`` is the Gaussian 1-sigma width
 sigma_q (not FWHM), and ``dxl``/``dxw`` are absolute slit lengths/widths in
 1/Angstrom.
+
+2D data always goes through ``resolution2d.Pinhole2D``, which smears only when
+**both** ``dqx_data`` and ``dqy_data`` are present. With its default polar
+coordinates those columns are the **radial** (parallel to q) and
+**azimuthal** (perpendicular) 1-sigma widths, not Cartesian x/y widths. The
+``accuracy`` setting chooses its oversampling (3x4 up to 10x20 points per
+pixel). Slit geometry does not exist for 2D data.
 """
 
 import warnings
@@ -46,6 +53,7 @@ import numpy as np
 
 from ..console import INVERSE_ANGSTROM, SIGMA
 from .loader import get_fit_index, has_real_data
+from .view import is_2d, q_magnitude
 
 #: The four resolution modes, mirroring SasView's Fit Page
 #: (*None* / *Use dQ Data* / *Custom Pinhole* / *Custom Slit*).
@@ -53,6 +61,9 @@ RESOLUTION_MODES = ('data', 'none', 'pinhole', 'slit')
 
 #: Mode used when nothing has been stated: the dataset's own columns.
 DEFAULT_RESOLUTION_MODE = 'data'
+
+#: Oversampling levels of sasmodels' 2D pinhole smearing, cheapest first.
+ACCURACY_LEVELS = ('low', 'med', 'high', 'xhigh')
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,25 +78,34 @@ class ResolutionSetting:
             ``'slit'``.
         slit_width: Slit width perpendicular to q in 1/Angstrom (``dxw``), set
             only for ``'slit'``.
+        accuracy: Oversampling of 2D smearing, one of :data:`ACCURACY_LEVELS`.
+            None means sasmodels' default (``'low'``). Inert for 1D data and
+            for unsmeared 2D data.
     """
 
     mode: str = DEFAULT_RESOLUTION_MODE
     dq_over_q: float | None = None
     slit_length: float | None = None
     slit_width: float | None = None
+    accuracy: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        """Return the setting as a plain dict with all four keys always present.
+        """Return the setting as a plain dict.
 
-        A new dict on every call, so a caller cannot reach back into fitter
-        state through the value returned by ``get_resolution()``.
+        The four 1D keys are always present; ``accuracy`` only once it has
+        been set, so saved analyses and their fit contexts from before it
+        existed still compare equal. A new dict on every call, so a caller
+        cannot reach back into fitter state through ``get_resolution()``.
         """
-        return {
+        setting = {
             'mode': self.mode,
             'dq_over_q': self.dq_over_q,
             'slit_length': self.slit_length,
             'slit_width': self.slit_width,
         }
+        if self.accuracy is not None:
+            setting['accuracy'] = self.accuracy
+        return setting
 
     def describe(self, *, ascii_only: bool = False) -> str:
         """Return a one-line human-readable description.
@@ -98,6 +118,12 @@ class ResolutionSetting:
                 export cannot store. Pass ``True`` for file content, leave it
                 ``False`` for log messages.
         """
+        text = self._describe_mode(ascii_only)
+        if self.accuracy is not None:
+            text += f', 2D accuracy {self.accuracy}'
+        return text
+
+    def _describe_mode(self, ascii_only: bool) -> str:
         sigma = 'sigma' if ascii_only else SIGMA
         inverse_angstrom = '1/Ang' if ascii_only else INVERSE_ANGSTROM
 
@@ -149,6 +175,7 @@ def validate_resolution(
     dq_over_q: float | None = None,
     slit_length: float | None = None,
     slit_width: float | None = None,
+    accuracy: str | None = None,
 ) -> ResolutionSetting:
     """Validate a resolution choice and return it as a :class:`ResolutionSetting`.
 
@@ -164,6 +191,8 @@ def validate_resolution(
             and rejected by every other mode.
         slit_width: Slit width perpendicular to q (1/Angstrom); optional under
             ``'slit'``, rejected elsewhere.
+        accuracy: 2D smearing oversampling, one of :data:`ACCURACY_LEVELS`;
+            accepted with every mode and inert where nothing is smeared in 2D.
 
     Returns:
         The validated, immutable setting.
@@ -178,10 +207,15 @@ def validate_resolution(
             f"Unknown resolution mode '{mode}'. Use one of: "
             f'{", ".join(repr(name) for name in RESOLUTION_MODES)}.'
         )
+    if accuracy is not None and accuracy not in ACCURACY_LEVELS:
+        raise ValueError(
+            f'Unknown accuracy {accuracy!r}. Use one of: '
+            f'{", ".join(repr(level) for level in ACCURACY_LEVELS)}.'
+        )
 
     if mode in ('data', 'none'):
         _reject_unused(mode, dq_over_q=dq_over_q, slit_length=slit_length, slit_width=slit_width)
-        return ResolutionSetting(mode=mode)
+        return ResolutionSetting(mode=mode, accuracy=accuracy)
 
     if mode == 'pinhole':
         _reject_unused(mode, slit_length=slit_length, slit_width=slit_width)
@@ -194,6 +228,7 @@ def validate_resolution(
         return ResolutionSetting(
             mode='pinhole',
             dq_over_q=_require_finite('dq_over_q', dq_over_q, positive=True),
+            accuracy=accuracy,
         )
 
     # mode == 'slit'
@@ -212,7 +247,7 @@ def validate_resolution(
     width = (
         None if slit_width is None else _require_finite('slit_width', slit_width, positive=False)
     )
-    return ResolutionSetting(mode='slit', slit_length=length, slit_width=width)
+    return ResolutionSetting(mode='slit', slit_length=length, slit_width=width, accuracy=accuracy)
 
 
 def _clear_columns(data: Any) -> None:
@@ -310,6 +345,10 @@ def apply_resolution(data: Any, setting: ResolutionSetting, *, warn: bool = True
     if getattr(evaluation_data, 'isSesans', False):
         return evaluation_data
 
+    if is_2d(evaluation_data):
+        _apply_resolution_2d(evaluation_data, setting, warn=warn)
+        return evaluation_data
+
     q_values = np.asarray(evaluation_data.x)
 
     if setting.mode == 'none':
@@ -366,3 +405,46 @@ def apply_resolution(data: Any, setting: ResolutionSetting, *, warn: bool = True
         )
     _clear_columns(evaluation_data)
     return evaluation_data
+
+
+def _apply_resolution_2d(data: Any, setting: ResolutionSetting, *, warn: bool) -> None:
+    """Write the 2D smearing columns *setting* implies onto *data* (a copy).
+
+    An all-zero column counts as absent: ``Pinhole2D`` would floor it to a
+    tiny width and pay the full oversampling cost for no smearing.
+    """
+    if setting.mode == 'slit':
+        raise ValueError(
+            "Resolution mode 'slit' describes a 1D slit geometry and does not apply "
+            "to 2D data. Use set_resolution('data'), 'none' or 'pinhole'."
+        )
+    data.accuracy = setting.accuracy or 'low'
+
+    if setting.mode == 'pinhole':
+        width = q_magnitude(data) * float(setting.dq_over_q)
+        data.dqx_data, data.dqy_data = width, width.copy()
+        return
+
+    radial = getattr(data, 'dqx_data', None)
+    azimuthal = getattr(data, 'dqy_data', None)
+    if setting.mode == 'data' and has_real_data(radial) and has_real_data(azimuthal):
+        for name, column in (('radial (dqx_data)', radial), ('azimuthal (dqy_data)', azimuthal)):
+            values = np.asarray(column, dtype=float)
+            bad = int(np.sum(~np.isfinite(values) | (values < 0)))
+            if bad:
+                raise ValueError(
+                    f"The dataset's {name} resolution column has {bad} negative or "
+                    "non-finite widths. Fix the file or use set_resolution('none')."
+                )
+        return
+
+    if setting.mode == 'data' and warn:
+        warnings.warn(
+            "Resolution mode 'data' was requested but the 2D dataset does not carry "
+            'both radial and azimuthal dQ columns (dqx_data, dqy_data). The model will '
+            "be evaluated unsmeared. Use set_resolution('pinhole', dq_over_q=...) to "
+            "state a width, or set_resolution('none') to silence this.",
+            stacklevel=3,
+        )
+    data.dqx_data = None
+    data.dqy_data = None

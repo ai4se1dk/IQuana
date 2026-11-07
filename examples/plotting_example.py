@@ -24,7 +24,7 @@ fitter = IQuana()
 
 # Load SANS data
 # Note the output: "Resolution (dQ) column: no" — this file has no Q-resolution
-fitter.load_data('simulated_sans_data.csv')
+fitter.load_data('tests/data/simulated_sans_data.csv')
 
 # Set up a cylinder model
 fitter.set_model('cylinder')
@@ -72,7 +72,7 @@ print("=" * 80)
 # Load a file that includes a dQ (resolution) column
 # Note the output: "Resolution (dQ) column: yes"
 fitter_res = IQuana()
-fitter_res.load_data('simulated_sans_data_with_resolution.csv')
+fitter_res.load_data('tests/data/simulated_sans_data_with_resolution.csv')
 
 # Set up the same cylinder model
 fitter_res.set_model('cylinder')

@@ -16,6 +16,7 @@ from sasmodels.core import load_model
 
 from iquana import examples
 from iquana.data.loader import has_real_data
+from iquana.data.view import is_2d
 
 ALL_EXAMPLES = examples.list_examples()
 
@@ -64,6 +65,10 @@ class TestRegistry:
     @pytest.mark.parametrize('name', ALL_EXAMPLES)
     def test_loads_as_fit_ready_data(self, name):
         data = examples.load(name)
+        if '2d' in examples.get_example(name).tags:
+            assert is_2d(data)
+            assert len(data.qx_data) == len(data.qy_data) == len(data.data) > 0
+            return
         assert len(data.x) > 0
         assert len(data.x) == len(data.y)
         assert data.qmin is not None and data.qmax is not None
@@ -80,7 +85,10 @@ class TestRegistry:
     def test_suggested_parameters_exist_on_model(self, name):
         """Every suggested parameter is real, so load_fitter cannot KeyError."""
         example = examples.get_example(name)
-        valid = _valid_parameter_names(example.model)
+        model = example.model
+        if example.structure_factor:
+            model = f'{model}@{example.structure_factor}'
+        valid = _valid_parameter_names(model)
         unknown = set(example.params) - valid
         assert not unknown, f"{name}: parameters not in model '{example.model}': {unknown}"
 

@@ -27,7 +27,7 @@ print("=" * 80)
 fitter = IQuana()
 
 # Load SANS data
-fitter.load_data('simulated_sans_data.csv')
+fitter.load_data('tests/data/simulated_sans_data.csv')
 
 # Set up a sphere model
 fitter.set_model('sphere')
@@ -78,7 +78,7 @@ print("=" * 80)
 
 # Create a new fitter for polydisperse fitting
 fitter_pd = IQuana()
-fitter_pd.load_data('simulated_sans_data.csv')
+fitter_pd.load_data('tests/data/simulated_sans_data.csv')
 fitter_pd.set_model('sphere')
 
 # Configure form factor parameters (same as before)
@@ -145,7 +145,7 @@ print("=" * 80)
 # Lognormal distribution - often more realistic for particle sizes
 # as it prevents negative sizes and naturally skews toward smaller particles
 fitter_lognorm = IQuana()
-fitter_lognorm.load_data('simulated_sans_data.csv')
+fitter_lognorm.load_data('tests/data/simulated_sans_data.csv')
 fitter_lognorm.set_model('sphere')
 
 fitter_lognorm.set_param('radius', value=50, min=10, max=100, vary=True)
@@ -164,7 +164,7 @@ print(f"Reduced chi-squared (lognormal): {result_lognorm['reduced_chisq']:.4f}")
 
 # Schulz distribution - commonly used for polymers and colloids
 fitter_schulz = IQuana()
-fitter_schulz.load_data('simulated_sans_data.csv')
+fitter_schulz.load_data('tests/data/simulated_sans_data.csv')
 fitter_schulz.set_model('sphere')
 
 fitter_schulz.set_param('radius', value=50, min=10, max=100, vary=True)
@@ -191,7 +191,7 @@ print("=" * 80)
 
 # You can also vary the polydispersity width during fitting
 fitter_vary_pd = IQuana()
-fitter_vary_pd.load_data('simulated_sans_data.csv')
+fitter_vary_pd.load_data('tests/data/simulated_sans_data.csv')
 fitter_vary_pd.set_model('sphere')
 
 fitter_vary_pd.set_param('radius', value=50, min=10, max=100, vary=True)
@@ -225,7 +225,7 @@ print("Part 7: Multiple Polydisperse Parameters (Cylinder)")
 print("=" * 80)
 
 fitter_cyl = IQuana()
-fitter_cyl.load_data('simulated_sans_data.csv')
+fitter_cyl.load_data('tests/data/simulated_sans_data.csv')
 fitter_cyl.set_model('cylinder')
 
 # Check polydisperse parameters for cylinder
@@ -284,7 +284,7 @@ print("=" * 80)
 
 # Full workflow example
 fitter_full = IQuana()
-fitter_full.load_data('simulated_sans_data.csv')
+fitter_full.load_data('tests/data/simulated_sans_data.csv')
 fitter_full.set_model('sphere')
 
 # Set form factor parameters

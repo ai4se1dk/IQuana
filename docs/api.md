@@ -16,6 +16,13 @@ The main class for SANS data fitting.
       members:
         - load_data
         - set_data
+        - is_2d
+        - mask_ring
+        - mask_box
+        - mask_invalid
+        - set_mask
+        - reset_mask
+        - get_mask
         - set_q_range
         - reset_q_range
         - get_q_range
@@ -59,6 +66,10 @@ The main class for SANS data fitting.
         - is_polydispersity_enabled
         - get_pd_params
         - get_varying_pd_params
+        - supports_magnetism
+        - get_magnetic_parameters
+        - enable_magnetism
+        - is_magnetism_enabled
 
 ### Composite model naming
 

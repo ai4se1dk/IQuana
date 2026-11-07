@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .console import logger
-from .data.loader import has_real_data
+from .data.loader import get_fit_index, has_real_data
+from .data.view import is_2d
 from .results import (
     MIN_POSTERIOR_PARAMETER_COUNT,
     FitResultContract,
@@ -127,6 +128,30 @@ def plot_fit(
     """
     if data is None:
         raise ValueError('No data to plot. Use load_data() first.')
+
+    if is_2d(data):
+        from .plotting2d import plot_fit_2d
+
+        # The evaluation copy carries the fitter's pixel selection as its mask.
+        if evaluation_data is not None:
+            included = get_fit_index(evaluation_data)
+        elif fit_result is not None:
+            included = resolve_fit_index(fit_result.artifacts.fit_index, len(data.qx_data))
+        else:
+            included = np.ones(len(data.qx_data), dtype=bool)
+        fig = plot_fit_2d(
+            data,
+            fit_result,
+            model_name,
+            included=included,
+            show_residuals=show_residuals,
+            log_scale=log_scale,
+            show_components=show_components,
+            weighting_mode=weighting_mode,
+        )
+        if resolve_show(show):
+            fig.show()
+        return fig
 
     error_y = error_bars(data.dy)
     error_x = error_bars(data.dx)

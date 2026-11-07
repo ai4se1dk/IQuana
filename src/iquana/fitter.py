@@ -31,6 +31,15 @@ from .data.loader import (
 )
 from .data.provenance import DataSource, fingerprint_arrays
 from .data.resolution import ResolutionSetting, apply_resolution, validate_resolution
+from .data.selection import (
+    Selection,
+    box,
+    mask_from,
+    ring,
+    validate_2d,
+    zero_uncertainty,
+)
+from .data.view import is_2d, n_points, q_magnitude, uncertainty
 from .data.weighting import WeightingSetting, apply_weighting, validate_weighting
 from .fitting import (
     DEFAULT_BUMPS_METHOD,
@@ -50,7 +59,9 @@ from .fitting.theory import (
     preview_quality,
     scatter_to_full_length,
     theory_data,
+    theory_data_2d,
 )
+from .modeling.magnetism import beam_fractions, channel_factor
 from .modeling.parameters import ParameterManager
 from .modeling.structure_factor import validate_radius_effective_mode
 from .persistence import build_fit_context, read_analysis, write_analysis
@@ -170,6 +181,9 @@ class IQuana:
         self._fit_contract: FitResultContract | None = None
         self._fitted_model = None
         self._full_q_range: tuple[float, float] | None = None
+        # 2D data only: which pixels the fit excludes. Fitter state, so the
+        # caller's mask is never rewritten (see data/selection.py).
+        self._selection: Selection | None = None
 
         # Resolution is an analysis choice, like the model and the parameters:
         # it lives on the fitter and survives load_data()/set_data(). The
@@ -209,7 +223,9 @@ class IQuana:
             ValueError: If the data cannot be loaded or is invalid
         """
         loaded = load_sans_dataset(filename, dataset=dataset)
+        selection = self._new_selection(loaded.data, None)
         self.data = loaded.data
+        self._adopt_data(selection)
         # Recorded here because nothing downstream can recover it: the selector
         # is resolved to a position and dropped, and the dataset's own
         # .filename metadata is not an authoritative path.
@@ -220,22 +236,9 @@ class IQuana:
             index=loaded.index,
             n_datasets=loaded.n_datasets,
         )
-        self._full_q_range = (self.data.qmin, self.data.qmax)
+        logger.info(self._data_summary(f'{OK} Loaded data from {filename}'))
 
-        has_dy = has_real_data(self.data.dy)
-        has_dx = has_real_data(self.data.dx)
-
-        logger.info(
-            f'{OK} Loaded data from {filename}\n'
-            f'  Q range: {self.data.qmin:.4f} to {self.data.qmax:.4f} {INVERSE_ANGSTROM}\n'
-            f'  Data points: {len(self.data.x)}\n'
-            f'  Error (dI) column: {"yes" if has_dy else "no"}\n'
-            f'  Resolution (dQ) column: {"yes" if has_dx else "no"}\n'
-            f'  Resolution mode: {self._resolution.describe()}\n'
-            f'  Weighting mode: {self._weighting.describe()}'
-        )
-
-    def set_data(self, data: Any) -> None:
+    def set_data(self, data: Any, mask_convention: str | None = None) -> None:
         """
         Use an in-memory dataset for fitting.
 
@@ -245,17 +248,40 @@ class IQuana:
         dataset is validated and normalized (``qmin``/``qmax``/``mask`` are
         recomputed as needed) so it is fit-ready.
 
+        2D data (a sasdata or sasmodels ``Data2D``) is used as given: its mask
+        is read once into the fitter's pixel selection and never rewritten,
+        so calling ``set_data`` twice on the same object is safe.
+
         Args:
             data: A sasdata ``Data1D`` object with populated ``x`` and ``y``
-                arrays. 2D data is not supported.
+                arrays, or a ``Data2D`` with flat ``qx_data``, ``qy_data`` and
+                ``data`` arrays.
+            mask_convention: 2D only. How to read the object's ``mask``:
+                ``'include'`` (True = pixel used, sasdata's readers) or
+                ``'exclude'`` (True = pixel excluded, sasmodels). The default
+                follows the class: sasdata ``Data2D`` is ``'include'``,
+                anything else ``'exclude'``. Pass ``'exclude'`` for a sasdata
+                object whose mask ``sasmodels.data.load_data`` already flipped.
 
         Raises:
-            TypeError: If the object is 2D data or lacks ``x``/``y`` arrays.
-            ValueError: If ``x``/``y`` are empty, have mismatched lengths, or
-                contain non-positive Q values.
+            TypeError: If the object lacks ``x``/``y`` (1D) or
+                ``qx_data``/``qy_data``/``data`` (2D) arrays.
+            ValueError: If the arrays are empty, have mismatched lengths, or
+                contain non-positive Q values (1D) or non-finite coordinates
+                (2D), or every 2D pixel is excluded.
         """
-        if getattr(data, 'qx_data', None) is not None:
-            raise TypeError('2D data is not supported. Provide a Data1D object.')
+        if is_2d(data):
+            selection = self._new_selection(data, mask_convention)
+            self.data = data
+            self._adopt_data(selection)
+            self._data_source = DataSource.from_memory(self.data)
+            label = (
+                getattr(data, 'title', '') or getattr(data, 'filename', '') or 'in-memory dataset'
+            )
+            logger.info(self._data_summary(f'{OK} Data set: {label}'))
+            return
+        if mask_convention is not None:
+            raise ValueError('mask_convention applies to 2D data only.')
         x = getattr(data, 'x', None)
         y = getattr(data, 'y', None)
         if x is None or y is None:
@@ -275,25 +301,206 @@ class IQuana:
             )
 
         self.data = normalize_sans_data(data)
+        self._adopt_data(None)
         # Replaces any file provenance: this dataset did not come from a path,
         # and inferring one from its metadata would be wrong (data_ops results
         # carry an operation string in .filename, not a file).
         self._data_source = DataSource.from_memory(self.data)
-        self._full_q_range = (self.data.qmin, self.data.qmax)
-
-        has_dy = has_real_data(self.data.dy)
-        has_dx = has_real_data(self.data.dx)
         label = getattr(data, 'title', '') or getattr(data, 'filename', '') or 'in-memory dataset'
+        logger.info(self._data_summary(f'{OK} Data set: {label}'))
 
+    @property
+    def is_2d(self) -> bool:
+        """True when the loaded dataset is 2D detector data."""
+        return is_2d(self.data)
+
+    @staticmethod
+    def _new_selection(data: Any, mask_convention: str | None) -> Selection | None:
+        """Validate *data* and build its pixel selection, before any state changes."""
+        if not is_2d(data):
+            return None
+        validate_2d(data)
+        selection = Selection.from_data(data, mask_convention)
+        if selection.excluded(data).all():
+            raise ValueError(
+                'Every pixel of the 2D dataset is excluded (by its mask, a non-finite '
+                'intensity or |Q| = 0). If the mask means the opposite, pass '
+                "mask_convention='include' or 'exclude' to set_data()."
+            )
+        return selection
+
+    def _adopt_data(self, selection: Selection | None) -> None:
+        """Finish ingesting ``self.data``: selection, full Q range, magnetism."""
+        self._selection = selection
+        if selection is not None:
+            # The |Q| extent of the usable pixels; sasmodels' own Data2D
+            # defaults (1e-16, inf) would make set_q_range() meaningless.
+            q = q_magnitude(self.data)[~selection.excluded(self.data)]
+            self.data.qmin, self.data.qmax = float(q.min()), float(q.max())
+        self._full_q_range = (self.data.qmin, self.data.qmax)
+        if self.is_magnetism_enabled() and selection is None:
+            self._param_manager.set_magnetism_enabled(False)
+            warnings.warn(
+                'Magnetism was disabled because the new dataset is 1D: sasmodels '
+                'evaluates magnetic scattering for 2D data only. The magnetic values '
+                'are kept; call enable_magnetism() again after loading 2D data.',
+                stacklevel=3,
+            )
+
+    def _data_summary(self, header: str) -> str:
+        """The multi-line summary printed when data is loaded or set."""
+        data = self.data
+        lines = [header]
+        if self._selection is None:
+            lines += [
+                f'  Q range: {data.qmin:.4f} to {data.qmax:.4f} {INVERSE_ANGSTROM}',
+                f'  Data points: {len(data.x)}',
+                f'  Error (dI) column: {"yes" if has_real_data(data.dy) else "no"}',
+                f'  Resolution (dQ) column: {"yes" if has_real_data(data.dx) else "no"}',
+            ]
+        else:
+            counts = self._selection.counts(data)
+            zero_di = int(zero_uncertainty(data).sum())
+            qx, qy = np.asarray(data.qx_data), np.asarray(data.qy_data)
+            has_dq = has_real_data(getattr(data, 'dqx_data', None)) and has_real_data(
+                getattr(data, 'dqy_data', None)
+            )
+            lines += [
+                f'  Dimension: 2D, {counts["pixels"]} pixels ({counts["file"]} excluded by '
+                f'the file, {zero_di} with dI = 0)',
+                f'  Qx range: {qx.min():.4f} to {qx.max():.4f} {INVERSE_ANGSTROM}, '
+                f'Qy range: {qy.min():.4f} to {qy.max():.4f} {INVERSE_ANGSTROM}',
+                f'  |Q| range: {data.qmin:.4f} to {data.qmax:.4f} {INVERSE_ANGSTROM}',
+                f'  Error (dI) column: {"yes" if has_real_data(uncertainty(data)) else "no"}',
+                f'  Resolution (radial/azimuthal dQ) columns: {"yes" if has_dq else "no"}',
+            ]
+        lines += [
+            f'  Resolution mode: {self._resolution.describe()}',
+            f'  Weighting mode: {self._weighting.describe()}',
+        ]
+        if self._selection is not None and self.supports_magnetism():
+            lines.append('  Magnetism: available (call enable_magnetism())')
+        return '\n'.join(lines)
+
+    def _fit_index(self) -> np.ndarray:
+        """Points the fit selects in ``self.data``, honouring the 2D selection."""
+        excluded = None if self._selection is None else self._selection.excluded(self.data)
+        return get_fit_index(self.data, excluded=excluded)
+
+    # =========================================================================
+    # 2D pixel selection
+    # =========================================================================
+
+    def _require_2d(self) -> Selection:
+        if self._selection is None:
+            raise ValueError('Pixel masks apply to 2D data. Load a 2D dataset first.')
+        return self._selection
+
+    def _report_exclusion(self, what: str, newly: int) -> None:
+        counts = self._selection.counts(self.data)
         logger.info(
-            f'{OK} Data set: {label}\n'
-            f'  Q range: {self.data.qmin:.4f} to {self.data.qmax:.4f} {INVERSE_ANGSTROM}\n'
-            f'  Data points: {len(self.data.x)}\n'
-            f'  Error (dI) column: {"yes" if has_dy else "no"}\n'
-            f'  Resolution (dQ) column: {"yes" if has_dx else "no"}\n'
-            f'  Resolution mode: {self._resolution.describe()}\n'
-            f'  Weighting mode: {self._weighting.describe()}'
+            f'{OK} {what}: {newly} more pixels excluded '
+            f'({counts["user"]} by masks, {int(self._fit_index().sum())} of '
+            f'{counts["pixels"]} fitted)'
         )
+
+    def mask_ring(self, qmin: float = 0.0, qmax: float = np.inf) -> None:
+        """Exclude the pixels with ``qmin <= |Q| <= qmax`` (2D data).
+
+        The usual beam-stop mask is ``mask_ring(qmax=0.012)``. Adds to any
+        earlier exclusions; :meth:`reset_mask` removes them all.
+
+        Raises:
+            ValueError: If no 2D data is loaded, or the ring would exclude
+                every |Q| (neither limit given).
+        """
+        selection = self._require_2d()
+        if qmin <= 0 and np.isinf(qmax):
+            raise ValueError(
+                'Give qmax (a beam stop) or qmin (an outer cut); both open masks everything.'
+            )
+        if qmin > qmax:
+            raise ValueError(f'qmin ({qmin:g}) must not exceed qmax ({qmax:g}).')
+        newly = selection.exclude(
+            ring(self.data, qmin, qmax), {'op': 'ring', 'qmin': qmin, 'qmax': qmax}
+        )
+        self._report_exclusion(f'Ring {qmin:g} <= |Q| <= {qmax:g}', newly)
+
+    def mask_box(
+        self, qx: tuple[float, float] | None = None, qy: tuple[float, float] | None = None
+    ) -> None:
+        """Exclude the pixels inside a box (2D data).
+
+        Each argument is an inclusive ``(low, high)`` interval; an omitted one
+        is unbounded, so ``mask_box(qx=(-0.01, 0.01))`` removes a vertical
+        stripe, for example a beam-stop holder.
+
+        Raises:
+            ValueError: If no 2D data is loaded or neither interval is given.
+        """
+        selection = self._require_2d()
+        if qx is None and qy is None:
+            raise ValueError('Give qx=(low, high), qy=(low, high), or both.')
+        operation = {
+            'op': 'box',
+            'qx': None if qx is None else list(qx),
+            'qy': None if qy is None else list(qy),
+        }
+        newly = selection.exclude(box(self.data, qx, qy), operation)
+        self._report_exclusion('Box', newly)
+
+    def mask_invalid(self) -> None:
+        """Exclude the pixels whose dI is zero or not finite (2D data).
+
+        The bumps engine and ``fit_bayesian()`` cannot weight such pixels under
+        the default ``'dI'`` weighting. Nothing is excluded automatically: the
+        choice is stated here, and saved with the analysis.
+        """
+        selection = self._require_2d()
+        newly = selection.exclude(zero_uncertainty(self.data), {'op': 'invalid'})
+        self._report_exclusion('Pixels with dI = 0', newly)
+
+    def set_mask(self, mask: Any) -> None:
+        """Replace every user exclusion with *mask* (2D data).
+
+        Args:
+            mask: A boolean array with one entry per pixel (True = excluded),
+                or a callable ``f(qx, qy)`` returning one. The file's own mask
+                still applies on top.
+
+        Raises:
+            TypeError: If the array is not boolean.
+            ValueError: If no 2D data is loaded or the shape is wrong. The
+                previous selection is kept.
+        """
+        selection = self._require_2d()
+        excluded = mask_from(self.data, mask)
+        selection.user_excluded = excluded
+        selection.operations = [{'op': 'set_mask'}]
+        self._report_exclusion('Mask set', int(excluded.sum()))
+
+    def reset_mask(self) -> None:
+        """Remove every user exclusion; the file's own mask still applies (2D data)."""
+        selection = self._require_2d()
+        selection.user_excluded = np.zeros_like(selection.user_excluded)
+        selection.operations = []
+        logger.info(f'{OK} Masks removed: {int(self._fit_index().sum())} pixels fitted')
+
+    def get_mask(self) -> dict[str, Any]:
+        """Pixel counts for 2D data and the boolean array of excluded pixels.
+
+        Returns:
+            ``{'pixels', 'file', 'user', 'invalid', 'fitted', 'excluded'}``:
+            counts of all pixels, those excluded by the file, by the mask
+            helpers, and as unusable (non-finite intensity or |Q| = 0), the
+            number the fit uses (after the Q range too), and the exclusion
+            array itself (True = excluded, before the Q range).
+        """
+        selection = self._require_2d()
+        counts = selection.counts(self.data)
+        counts['fitted'] = int(self._fit_index().sum())
+        counts['excluded'] = selection.excluded(self.data)
+        return counts
 
     def set_q_range(self, qmin: float | None = None, qmax: float | None = None) -> None:
         """
@@ -330,7 +537,7 @@ class IQuana:
         self.data.qmin = new_qmin
         self.data.qmax = new_qmax
 
-        index = get_fit_index(self.data)
+        index = self._fit_index()
         n_points = int(index.sum())
         if n_points == 0:
             self.data.qmin, self.data.qmax = previous
@@ -354,7 +561,7 @@ class IQuana:
             raise ValueError('No data loaded. Use load_data() first.')
 
         self.data.qmin, self.data.qmax = self._full_q_range
-        n_points = int(get_fit_index(self.data).sum())
+        n_points = int(self._fit_index().sum())
         logger.info(
             f'{OK} Q range reset to {self.data.qmin:.6g} to {self.data.qmax:.6g} '
             f'{INVERSE_ANGSTROM}\n  Points in fit: {n_points}'
@@ -377,6 +584,7 @@ class IQuana:
         dq_over_q: float | None = None,
         slit_length: float | None = None,
         slit_width: float | None = None,
+        accuracy: str | None = None,
     ) -> None:
         """
         State how instrument resolution is applied when the model is evaluated.
@@ -425,6 +633,16 @@ class IQuana:
             slit_width: Slit width perpendicular to q, an absolute width in
                 Å⁻¹ (sasmodels' ``dxw``). Optional under ``'slit'``; omit it
                 for the usual long-slit (USANS) geometry.
+            accuracy: Oversampling of 2D smearing: ``'low'`` (sasmodels'
+                default, 12 evaluations per pixel), ``'med'`` (30), ``'high'``
+                (60) or ``'xhigh'`` (200). Accepted at any time and stored with
+                the rest of the setting; it has an effect only when 2D data is
+                smeared.
+
+        For 2D data, ``'data'`` uses the file's radial and azimuthal widths
+        (``dqx_data``/``dqy_data``, which sasmodels reads as parallel and
+        perpendicular to q, not as x/y widths); ``'pinhole'`` sets both to
+        ``dq_over_q·|Q|``, an isotropic approximation; ``'slit'`` is refused.
 
         Raises:
             ValueError: If the mode is unknown, an argument does not belong to
@@ -439,9 +657,19 @@ class IQuana:
             P(r) inversion is unaffected: it reads ``fitter.data``, which this
             setting deliberately leaves alone.
         """
-        self._resolution = validate_resolution(
-            mode, dq_over_q=dq_over_q, slit_length=slit_length, slit_width=slit_width
+        setting = validate_resolution(
+            mode,
+            dq_over_q=dq_over_q,
+            slit_length=slit_length,
+            slit_width=slit_width,
+            accuracy=accuracy,
         )
+        if mode == 'slit' and self.is_2d:
+            raise ValueError(
+                "Resolution mode 'slit' is a 1D geometry and does not apply to the "
+                "loaded 2D data. Use 'data', 'none' or 'pinhole'."
+            )
+        self._resolution = setting
         logger.info(f'{OK} Resolution: {self._resolution.describe()}')
 
     def get_resolution(self) -> dict[str, Any]:
@@ -541,6 +769,10 @@ class IQuana:
         evaluation_data = apply_resolution(
             self.data if data is None else data, self._resolution, warn=warn
         )
+        if self._selection is not None and is_2d(evaluation_data):
+            # The one place sasmodels' exclusion mask is written: on the copy.
+            evaluation_data.mask = self._selection.excluded(evaluation_data)
+            evaluation_data.q_data = q_magnitude(evaluation_data)
         # apply_resolution returned a fresh deep copy nobody else holds, so the
         # weighting is written onto it rather than copying a second time.
         return apply_weighting(evaluation_data, self._weighting, copy=False)
@@ -1071,6 +1303,99 @@ class IQuana:
             self._param_manager.to_display_name(f'{param_name}_pd') for param_name in varying_base
         ]
 
+    # =========================================================================
+    # Magnetism
+    # =========================================================================
+
+    def supports_magnetism(self) -> bool:
+        """True when the current model has sasmodels' magnetic parameters.
+
+        Every compiled model with an SLD parameter has them; pure-Python
+        models and models with vector SLDs (``sld[n]``) do not.
+        """
+        return (
+            self.kernel is not None and self._param_manager.magnetism_unsupported_reason() is None
+        )
+
+    def get_magnetic_parameters(self) -> list[str]:
+        """Names of the model's magnetic parameters, whether or not they are exposed."""
+        return self._param_manager.magnetic_parameter_names()
+
+    def is_magnetism_enabled(self) -> bool:
+        """True while the magnetic parameters are part of the model."""
+        return self._param_manager.is_magnetism_enabled()
+
+    def enable_magnetism(
+        self,
+        enabled: bool = True,
+        beam: str | None = None,
+        efficiency_in: float = 1.0,
+        efficiency_out: float = 1.0,
+    ) -> None:
+        """
+        Add sasmodels' magnetic parameters to the model, or remove them.
+
+        sasmodels evaluates magnetic scattering for **2D data only**, so this
+        needs a 2D dataset. The parameters are the polarisation state
+        (``up_frac_i``, ``up_frac_f``: spin-up fractions before and after the
+        sample; ``up_theta``, ``up_phi``: the polarisation axis) and, for each
+        SLD, a magnetisation vector (``<sld>_M0``, ``<sld>_mtheta``,
+        ``<sld>_mphi``). Angles are in degrees, θ from the beam (z) axis and φ
+        from +x in the detector plane, for the magnetisation and the
+        polarisation alike. The defaults point the polarisation along +x and
+        the magnetisation along the beam.
+
+        Args:
+            enabled: False removes the parameters again. Their values are
+                remembered; links that involve them are dropped.
+            beam: Set ``up_frac_i``/``up_frac_f`` for a common experiment:
+                ``'unpolarised'``, ``'sanspol+'``, ``'sanspol-'`` (polariser,
+                no analyser), ``'pa++'``, ``'pa--'``, ``'pa+-'``, ``'pa-+'``
+                (full polarisation analysis). Without it the sasmodels
+                defaults (0 / 0, spin-down non-spin-flip) apply, and a fit
+                warns about them.
+            efficiency_in: Polariser efficiency, 0.5 to 1 (``'sanspol+'``
+                with 0.95 gives ``up_frac_i = 0.95``).
+            efficiency_out: Analyser efficiency, 0.5 to 1.
+
+        Raises:
+            ValueError: If no model is set, the model has no magnetic
+                parameters, no 2D data is loaded, or the beam or an
+                efficiency is invalid. A rejected call changes nothing.
+        """
+        if not enabled:
+            if beam is not None:
+                raise ValueError('beam= applies when enabling magnetism.')
+            self._param_manager.set_magnetism_enabled(False)
+            logger.info(f'{OK} Magnetism disabled (values kept)')
+            return
+
+        self._require_model()
+        reason = self._param_manager.magnetism_unsupported_reason()
+        if reason is not None:
+            raise ValueError(f"Model '{self.model_name}' cannot use magnetism: {reason}.")
+        if not self.is_2d:
+            raise ValueError(
+                'Magnetism needs 2D data: sasmodels evaluates magnetic parameters in '
+                'its 2D kernel only, so with 1D data (or none) they would have no '
+                'effect. Load a 2D dataset first.'
+            )
+        fractions = None if beam is None else beam_fractions(beam, efficiency_in, efficiency_out)
+
+        self._param_manager.set_magnetism_enabled(True)
+        if fractions is not None:
+            self._param_manager.set_magnetic_beam(beam, *fractions)
+        beam_text = (
+            f'beam {beam}: up_frac_i = {fractions[0]:g}, up_frac_f = {fractions[1]:g}'
+            if fractions
+            else 'polarisation at the sasmodels defaults (up_frac_i = up_frac_f = 0); '
+            "pass beam= ('unpolarised', 'sanspol+', ...) to state the experiment"
+        )
+        logger.info(
+            f'{OK} Magnetism enabled: {len(self.get_magnetic_parameters())} parameters\n'
+            f'  {beam_text}'
+        )
+
     def _finalize_fit(self, engine_output) -> dict[str, Any]:
         """Apply engine output to fitter state and return legacy-compatible results."""
         self._param_manager.apply_fitted_values(engine_output.fitted_values)
@@ -1108,6 +1433,7 @@ class IQuana:
             self._fit_contract.n_points,
             None if self.data is None else fingerprint_arrays(self.data),
             weighting=self._weighting.as_dict(),
+            selection=None if self._selection is None else self._selection.digest(),
         )
 
         # Attach per-component curves for '+' mixture models (no-op otherwise).
@@ -1237,6 +1563,10 @@ class IQuana:
         components = self._param_manager.get_components()
         if not components:
             return None
+        # The parts would be evaluated without the global polarisation (up_*)
+        # and drawn nowhere: 2D plots have no component maps.
+        if is_2d(self.data):
+            return None
 
         # '*' mixtures: part intensities multiply, so additive component
         # curves are meaningless. Documented no-op.
@@ -1363,7 +1693,7 @@ class IQuana:
         if self.fit_result['engine'] == 'bumps':
             fit_index = extract_fit_index(self._fitted_model.active_model)
             curve = np.asarray(self._fitted_model.active_model.theory())
-            resolved_index = resolve_fit_index(fit_index, len(self.data.x))
+            resolved_index = resolve_fit_index(fit_index, n_points(self.data))
             return FitResultContract(
                 engine=self.fit_result['engine'],
                 method=self.fit_result['method'],
@@ -1380,7 +1710,7 @@ class IQuana:
         calculator = DirectModel(self._evaluation_data(warn=False), self.kernel)
         par_dict = {name: info['value'] for name, info in self.fit_result['parameters'].items()}
         fit_index = extract_fit_index(calculator)
-        resolved_index = resolve_fit_index(fit_index, len(self.data.x))
+        resolved_index = resolve_fit_index(fit_index, n_points(self.data))
         return FitResultContract(
             engine=self.fit_result['engine'],
             method=self.fit_result['method'],
@@ -1454,6 +1784,7 @@ class IQuana:
         # Built once: the guard inspects exactly the σ the engine will divide by.
         evaluation_data = self._evaluation_data()
         self._check_fit_uncertainties(engine, evaluation_data)
+        self._check_model_for_data(evaluation_data)
         self._log_active_resolution()
 
         if engine == 'bumps':
@@ -1570,7 +1901,7 @@ class IQuana:
         index = get_fit_index(evaluation_data)
         # apply_weighting zero-fills a missing or empty dI, so dy is always a
         # full column here.
-        dy_fit = np.asarray(evaluation_data.dy, dtype=float)[index]
+        dy_fit = uncertainty(evaluation_data)[index]
         n_zero = int(np.sum(np.nan_to_num(dy_fit) == 0))
         if n_zero == 0:
             return
@@ -1584,8 +1915,9 @@ class IQuana:
                 'uncertainty (dI)'
             )
             exits = (
-                'Provide dI values, exclude the points (mask or set_q_range), '
-                "choose another weighting (set_weighting('sqrt') or "
+                'Provide dI values, exclude the points (mask or set_q_range'
+                + (', or mask_invalid() for 2D data' if is_2d(evaluation_data) else '')
+                + "), choose another weighting (set_weighting('sqrt') or "
                 "set_weighting('none'))"
             )
         else:
@@ -1612,6 +1944,118 @@ class IQuana:
             f'so these points may dominate {CHI_SQUARED} relative to points with small errors.',
             stacklevel=2,
         )
+
+    def _check_model_for_data(self, evaluation_data: Any) -> None:
+        """Checks that depend on the data's dimension, run before every fit.
+
+        Raises:
+            ValueError: For an empty 2D selection, the 2D beta approximation,
+                or a polarisation channel whose magnetisation can reach zero
+                (see :meth:`_check_magnetism`).
+        """
+        snapshot = self._param_manager.snapshot_fit_state()
+        if not is_2d(evaluation_data):
+            orientation = {
+                p.name
+                for p in self.kernel.info.parameters.kernel_parameters
+                if p.type == 'orientation'
+            }
+            varied = sorted(orientation & set(snapshot.varying_params))
+            if varied:
+                warnings.warn(
+                    f'Orientation parameter(s) {", ".join(varied)} vary, but they do not '
+                    'affect 1D intensities (sasmodels averages over orientation). Fix them, '
+                    'or fit 2D data.',
+                    stacklevel=3,
+                )
+            return
+        if not get_fit_index(evaluation_data).any():
+            raise ValueError('Every pixel is excluded; reset_mask() or widen set_q_range().')
+        mode = snapshot.params.get('structure_factor_mode', {}).get('value', 0)
+        if mode == 1:
+            raise ValueError(
+                'structure_factor_mode = 1 (the beta approximation) is not supported by '
+                'sasmodels for 2D data. Set it to 0.'
+            )
+        self._check_magnetism(evaluation_data)
+
+    def _check_magnetism(self, evaluation_data: Any) -> None:
+        """Refuse or warn about magnetic setups sasmodels evaluates surprisingly.
+
+        At zero magnetisation sasmodels switches to its non-magnetic kernel,
+        which ignores the polarisation. The two kernels agree only where the
+        channel factor (:func:`~iquana.modeling.magnetism.channel_factor`) is
+        1, so in the other channels (spin flip, imperfect analysers) the model
+        jumps when every ``*_M0`` reaches zero. Such fits are refused. Varied
+        magnetic parameters the model does not respond to (``mphi`` with M
+        along the beam, ``up_theta`` with an unpolarised beam, ...) are
+        reported, because the fit cannot determine them.
+        """
+        manager = self._param_manager
+        if not manager.is_magnetism_enabled():
+            return
+        params, links = self.params, self.get_links()
+        magnetic = [name for name in manager.magnetic_parameter_names() if name not in links]
+        up_i, up_f = params['up_frac_i']['value'], params['up_frac_f']['value']
+        if manager.magnetic_beam() is None:
+            warnings.warn(
+                'The polarisation is at the sasmodels defaults (up_frac_i = up_frac_f = 0, '
+                'spin-down non-spin-flip). Pass beam= to enable_magnetism() or set '
+                'up_frac_i/up_frac_f to describe the experiment.',
+                stacklevel=4,
+            )
+
+        amplitudes = {name: params[name] for name in magnetic if name.endswith('_M0')}
+        all_zero = all(info['value'] == 0 and not info['vary'] for info in amplitudes.values())
+        can_vanish = all(
+            (info['value'] == 0 and not info['vary'])
+            or (info['vary'] and info['min'] <= 0 <= info['max'])
+            for info in amplitudes.values()
+        )
+        factor = channel_factor(up_i, up_f)
+        if can_vanish and abs(factor - 1) > 1e-9:
+            raise ValueError(
+                f'With up_frac_i = {up_i:g} and up_frac_f = {up_f:g} the magnetisation '
+                'must not be able to reach zero: there sasmodels switches to its '
+                'non-magnetic kernel, which ignores the polarisation and weights the '
+                f'nuclear term 1 instead of {factor:.3g}, so the model jumps. Give a '
+                f'varied amplitude ({", ".join(amplitudes)}) a range that excludes 0, '
+                'or fix one at a non-zero value.'
+            )
+        if all_zero:
+            warnings.warn(
+                'Every magnetic amplitude (*_M0) is fixed at zero, so the model is the '
+                'nuclear intensity whatever the polarisation settings say.',
+                stacklevel=4,
+            )
+            return
+
+        base, _ = self._evaluate(evaluation_data)
+        scale = np.maximum(np.abs(base), np.finfo(np.float32).tiny)
+        for name in magnetic:
+            info = params[name]
+            if not info['vary']:
+                continue
+            if name.endswith('_M0'):
+                step = 0.1 * max(abs(info['value']), 1.0)
+            elif name.startswith('up_frac'):
+                step = 0.1
+            else:
+                step = 15.0
+            trial = (
+                info['value'] + step
+                if info['value'] + step <= info['max']
+                else info['value'] - step
+            )
+            curve, _ = self._evaluate(evaluation_data, manager.canonical_overrides({name: trial}))
+            if np.nanmax(np.abs(curve - base) / scale) < 1e-5:
+                warnings.warn(
+                    f"'{name}' varies but the model does not change with it at the current "
+                    'values (for example an azimuth with the magnetisation along the beam, '
+                    'or the polarisation axis with an unpolarised beam), so the fit cannot '
+                    'determine it. Fix it, or change the parameters it depends on.',
+                    stacklevel=4,
+                )
 
     def _fit_bumps(
         self, data: Any, method: str = DEFAULT_BUMPS_METHOD, **kwargs: Any
@@ -1700,6 +2144,7 @@ class IQuana:
         # nothing the user had set.
         evaluation_data = self._evaluation_data()
         self._check_fit_uncertainties('dream', evaluation_data)
+        self._check_model_for_data(evaluation_data)
         self._log_active_resolution()
         if self._weighting.mode == 'none':
             warnings.warn(
@@ -1801,7 +2246,13 @@ class IQuana:
 
         Raises:
             ValueError: If the last fit was not Bayesian or no data is loaded.
+            NotImplementedError: For 2D data, which has no 1D predictive band.
         """
+        if self.is_2d:
+            raise NotImplementedError(
+                'The posterior predictive band is a 1D display. For 2D data use '
+                'plot_results(), which shows the best posterior sample.'
+            )
         contract = self._get_active_fit_contract()
         if contract is None:
             raise ValueError('No fit results available. Run fit_bayesian() first.')
@@ -1872,9 +2323,27 @@ class IQuana:
         if self.kernel is None:
             raise ValueError('No model loaded. Use set_model() first.')
 
-    def _theory_target(self, q: np.ndarray | None, dq: float | None) -> Any:
-        """The dataset to evaluate on: an empty one on *q*, else the loaded data."""
+    def _theory_target(
+        self,
+        q: np.ndarray | None,
+        dq: float | None,
+        qx: np.ndarray | None = None,
+        qy: np.ndarray | None = None,
+    ) -> Any:
+        """The dataset to evaluate on: an empty one on *q* or *qx*/*qy*, else the data."""
+        if qx is not None or qy is not None:
+            if qx is None or qy is None:
+                raise ValueError('Give qx and qy together.')
+            if q is not None:
+                raise ValueError('Give either q (1D) or qx/qy (2D), not both.')
+            return theory_data_2d(qx, qy, dq, accuracy=self._resolution.accuracy or 'low')
         if q is not None:
+            if self.is_magnetism_enabled():
+                raise ValueError(
+                    "A 1D q grid gives sasmodels' orientation-averaged nuclear curve, not "
+                    'the magnetic model: magnetism is evaluated in 2D only. Use qx/qy, '
+                    'or enable_magnetism(False) for the nuclear curve.'
+                )
             return theory_data(q, dq)
         if dq is not None:
             raise ValueError(
@@ -1897,7 +2366,13 @@ class IQuana:
         pars = build_model_parameters(self._param_manager.snapshot_fit_state(), overrides)
         return evaluate_theory(data, self.kernel, pars)
 
-    def calculate(self, q: np.ndarray | None = None, dq: float | None = None) -> np.ndarray:
+    def calculate(
+        self,
+        q: np.ndarray | None = None,
+        dq: float | None = None,
+        qx: np.ndarray | None = None,
+        qy: np.ndarray | None = None,
+    ) -> np.ndarray:
         """
         Evaluate the model at the current parameter values, without fitting.
 
@@ -1905,9 +2380,14 @@ class IQuana:
             q: Q values in Å⁻¹ to evaluate on. When omitted, the loaded
                 dataset's Q values are used and its resolution (dQ or slit
                 columns) is applied, exactly as during a fit.
-            dq: Relative resolution width ΔQ/Q applied to the *q* grid.
-                Only valid together with *q*; the dataset carries its own
-                resolution.
+            dq: Relative resolution width ΔQ/Q applied to the *q* grid (or
+                isotropically to *qx*/*qy*). Only valid with an explicit grid;
+                the dataset carries its own resolution.
+            qx: 2D detector x coordinates in Å⁻¹, paired point by point with
+                *qy* and of the same shape; the result has that shape. Build a
+                Cartesian grid with ``np.meshgrid``. Pixels at |Q| = 0 come
+                back NaN.
+            qy: 2D detector y coordinates in Å⁻¹, paired with *qx*.
 
         Returns:
             Intensities as a float64 array. On the data grid the result has
@@ -1920,8 +2400,9 @@ class IQuana:
                 omitted, if *dq* is given without *q*, or if *q*/*dq* are
                 invalid.
         """
-        curve, fit_index = self._evaluate(self._theory_target(q, dq))
-        return scatter_to_full_length(curve, fit_index)
+        curve, fit_index = self._evaluate(self._theory_target(q, dq, qx, qy))
+        full = scatter_to_full_length(curve, fit_index)
+        return full if qx is None else full.reshape(np.shape(qx))
 
     def plot_model(
         self,
@@ -2051,6 +2532,11 @@ class IQuana:
             KeyError: If an override names an unknown parameter.
         """
         self._require_model()
+        if self.is_2d:
+            raise NotImplementedError(
+                'compare() overlays 1D curves. For 2D data use plot_model() at each '
+                'parameter set, or calculate(qx=..., qy=...).'
+            )
 
         if cases and sweep:
             raise ValueError('Pass either cases or a parameter sweep, not both.')

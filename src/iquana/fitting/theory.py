@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from sasmodels.data import empty_data1D
+from sasmodels.data import Data2D, empty_data1D
 from sasmodels.direct_model import DirectModel
 
 from ..data.loader import has_real_data, validate_q_grid
+from ..data.selection import ORIGIN_Q
+from ..data.view import intensity, n_points, uncertainty
 from ..results import ParameterStateSnapshot, resolve_fit_index
 from .base import apply_parameter_links, extract_fit_index, pd_is_active, reduced_chisq
 
@@ -72,6 +74,33 @@ def theory_data(q: Any, dq: float | None = None) -> Any:
     return empty_data1D(q_values, resolution=0.0 if dq is None else float(dq))
 
 
+def theory_data_2d(qx: Any, qy: Any, dq: float | None = None, accuracy: str = 'low') -> Any:
+    """An empty 2D dataset on paired detector coordinates *qx*, *qy*.
+
+    One point per (qx[i], qy[i]) pair; build a mesh with ``np.meshgrid`` first
+    for a Cartesian grid. Pixels at the origin are excluded (masked), because
+    sasmodels cannot evaluate them reliably. *dq* is a relative pinhole width,
+    applied isotropically (radial = azimuthal = dq·|q|).
+    """
+    qx = np.asarray(qx, dtype=float)
+    qy = np.asarray(qy, dtype=float)
+    if qx.shape != qy.shape or qx.size == 0:
+        raise ValueError(
+            f'qx and qy must be non-empty and have the same shape, got {qx.shape} and {qy.shape}.'
+        )
+    qx, qy = qx.ravel(), qy.ravel()
+    if not (np.all(np.isfinite(qx)) and np.all(np.isfinite(qy))):
+        raise ValueError('qx and qy must be finite.')
+    if dq is not None and (not np.isfinite(dq) or dq < 0):
+        raise ValueError(f'dq must be non-negative and finite, got {dq}.')
+    q = np.hypot(qx, qy)
+    width = None if not dq else float(dq) * q
+    data = Data2D(x=qx, y=qy, dx=width, dy=None if width is None else width.copy())
+    data.mask = q <= ORIGIN_Q
+    data.accuracy = accuracy
+    return data
+
+
 def evaluate_theory(data: Any, kernel: Any, pars: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate *kernel* over the fitted points of *data*.
 
@@ -80,7 +109,7 @@ def evaluate_theory(data: Any, kernel: Any, pars: dict[str, Any]) -> tuple[np.nd
     """
     calculator = DirectModel(data, kernel)
     curve = np.asarray(calculator(**pars), dtype=float)
-    return curve, resolve_fit_index(extract_fit_index(calculator), len(data.x))
+    return curve, resolve_fit_index(extract_fit_index(calculator), n_points(data))
 
 
 def scatter_to_full_length(curve: np.ndarray, fit_index: np.ndarray) -> np.ndarray:
@@ -103,14 +132,15 @@ def preview_quality(
     free parameters outnumber the fitted points the reduced value is NaN, exactly
     as it is after a fit.
     """
-    y = np.asarray(data.y, dtype=float)[fit_index]
-    n_points = int(len(y))
-    dof = n_points - n_free
+    y = intensity(data)[fit_index]
+    n_fitted = int(len(y))
+    dof = n_fitted - n_free
 
-    dy = None if data.dy is None else np.asarray(data.dy, dtype=float)[fit_index]
+    sigma = uncertainty(data)
+    dy = None if sigma is None else sigma[fit_index]
     if not has_real_data(dy) or np.any(dy == 0):
-        return PreviewQuality(float('nan'), float('nan'), n_points, n_free, dof, None)
+        return PreviewQuality(float('nan'), float('nan'), n_fitted, n_free, dof, None)
 
     residuals = (y - curve) / dy
     chisq = float(np.sum(residuals**2))
-    return PreviewQuality(chisq, reduced_chisq(chisq, dof), n_points, n_free, dof, residuals)
+    return PreviewQuality(chisq, reduced_chisq(chisq, dof), n_fitted, n_free, dof, residuals)

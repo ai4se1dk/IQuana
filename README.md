@@ -25,6 +25,8 @@ A flexible, model-agnostic Python template for fitting Small-Angle Neutron Scatt
 - **Multiple Fitting Engines**: Supports both BUMPS (default) and LMFit optimization engines
 - **Flexible Data Loading**: Reads CSV, XML, and HDF5 formats via sasdata, including files holding several datasets — pick one with `load_data(path, dataset=...)` by index or name
 - **Example Data Built In**: A curated set of ready-to-fit datasets plus a simulator that generates data  — `examples.load_fitter('silica_spheres')` or `examples.simulate('sphere', radius=50)`
+- **2D Data**: Fit detector images I(qx, qy) with the same workflow: beam-stop and validity masks (`mask_ring()`, `mask_invalid()`), 2D resolution, data/model/residual heatmaps, CSV export and saved analyses
+- **Magnetic (Polarised) SANS**: `enable_magnetism(beam='sanspol+')` exposes sasmodels' magnetisation and polarisation parameters for 2D data, with checks for setups sasmodels evaluates surprisingly
 - **Polydispersity and Custom Models**: Size distributions on any polydisperse parameter via `set_pd_param()`, and your own SasModels plugin models loaded by file path
 - **Resolution Control**: Choose how instrument smearing is applied — dQ from the data, none, custom pinhole (`dq_over_q`) or slit — with `set_resolution()`
 - **Data Weighting**: Choose which σ divides each residual — the data's dI, √|I|, |I| or none — with `set_weighting()`, matching SasView's Fit Page; this is also what lets the bumps engine and `fit_bayesian()` fit data without uncertainties
@@ -342,6 +344,7 @@ move (`min < max`); the fit names any that do not.
 - [notebooks/resolution_control.ipynb](notebooks/resolution_control.ipynb) — explicit resolution (smearing) control: the four modes, what each hands sasmodels, and what ignoring resolution costs.
 - [notebooks/sasmodels-basic.ipynb](notebooks/sasmodels-basic.ipynb) — the same kind of fit done directly with sasmodels and BUMPS, without IQuana, for comparison.
 - [notebooks/simultaneous_fitting.ipynb](notebooks/simultaneous_fitting.ipynb) — fitting several datasets together with `MultiFitter`: contrast variation, shared parameters, constraints, and joint diagnostics.
+- [notebooks/magnetic_2d_fitting.ipynb](notebooks/magnetic_2d_fitting.ipynb) — 2D detector images and polarised SANS: masks, heatmaps, beam presets, magnetic fits of simulated and measured SANSPOL data.
 - [notebooks/four_form_factors.ipynb](notebooks/four_form_factors.ipynb) — fitting a sum of four form factors against one dataset: what to fix, why a global optimizer is needed, and how to read the parameter correlations that remain.
 
 

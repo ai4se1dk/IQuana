@@ -10,7 +10,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_DIR = REPO_ROOT / 'examples'
 
 # Data files the examples load from the working directory.
-DATA_FILES = ('simulated_sans_data.csv', 'simulated_sans_data_with_resolution.csv')
+DATA_FILES = (
+    'tests/data/simulated_sans_data.csv',
+    'tests/data/simulated_sans_data_with_resolution.csv',
+)
 
 
 def pytest_collection_modifyitems(items):
@@ -30,6 +33,7 @@ def no_figure_display(monkeypatch):
 def example_workdir(tmp_path, monkeypatch):
     """A scratch cwd holding the example data files, so outputs stay out of the repo."""
     for name in DATA_FILES:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO_ROOT / name, tmp_path / name)
     monkeypatch.chdir(tmp_path)
     return tmp_path

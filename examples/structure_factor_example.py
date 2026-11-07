@@ -27,7 +27,7 @@ print("="*80)
 fitter = IQuana()
 
 # Load SANS data
-fitter.load_data('simulated_sans_data.csv')
+fitter.load_data('tests/data/simulated_sans_data.csv')
 
 # Set up a sphere model (form factor)
 fitter.set_model('sphere')
@@ -68,7 +68,7 @@ print("="*80)
 
 # Create a new fitter
 fitter2 = IQuana()
-fitter2.load_data('simulated_sans_data.csv')
+fitter2.load_data('tests/data/simulated_sans_data.csv')
 fitter2.set_model('sphere')
 
 # Set up form factor parameters
@@ -114,7 +114,7 @@ print("="*80)
 
 # Example with hayter_msa (for charged particles)
 fitter3 = IQuana()
-fitter3.load_data('simulated_sans_data.csv')
+fitter3.load_data('tests/data/simulated_sans_data.csv')
 fitter3.set_model('sphere')
 fitter3.set_param('radius', value=50, min=10, max=100, vary=True)
 fitter3.set_param('scale', value=0.01, min=0.001, max=1, vary=True)
@@ -161,7 +161,7 @@ print("="*80)
 
 # Full workflow example
 fitter_full = IQuana()
-fitter_full.load_data('simulated_sans_data.csv')
+fitter_full.load_data('tests/data/simulated_sans_data.csv')
 
 # Set form factor
 fitter_full.set_model('sphere')

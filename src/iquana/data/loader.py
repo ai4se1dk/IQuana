@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 from sasdata.dataloader.loader import Loader
 
+from .view import intensity, is_2d, q_magnitude
+
 
 def has_real_data(arr) -> bool:
     """Return True when *arr* contains at least one finite, non-zero value.
@@ -37,18 +39,25 @@ def validate_q_grid(q: Any) -> np.ndarray:
     return q_values
 
 
-def get_fit_index(data: Any) -> np.ndarray:
+def get_fit_index(data: Any, excluded: np.ndarray | None = None) -> np.ndarray:
     """Return the boolean index of points included in the fit.
 
-    Mirrors how sasmodels interprets 1D data: a point is fitted when it lies
-    inside [qmin, qmax], is not masked, and has a finite intensity.
+    Mirrors how sasmodels interprets the data: a point is fitted when its |Q|
+    lies inside [qmin, qmax], it is not masked, and its intensity is not NaN.
+
+    Args:
+        data: The dataset. Its ``mask`` is read in sasmodels' convention
+            (True = excluded), which holds for 1D data and for 2D evaluation
+            copies, but **not** for a sasdata 2D object as loaded.
+        excluded: An exclusion mask to use instead of ``data.mask``. The fitter
+            passes its own 2D selection here.
     """
-    x = np.asarray(data.x)
-    index = (x >= data.qmin) & (x <= data.qmax)
-    mask = getattr(data, 'mask', None)
+    q = q_magnitude(data)
+    index = (q >= data.qmin) & (q <= data.qmax)
+    mask = getattr(data, 'mask', None) if excluded is None else excluded
     if mask is not None:
         index &= ~np.asarray(mask, dtype=bool)
-    index &= ~np.isnan(np.asarray(data.y))
+    index &= ~np.isnan(intensity(data))
     return index
 
 
@@ -64,7 +73,12 @@ def normalize_sans_data(data: Any) -> Any:
     check, so a legitimate limit of ``0.0`` is preserved). The mask is the
     union of any existing mask and the NaN positions in x, y and — when the
     columns carry real data — dy and dx.
+
+    2D data is returned unchanged: its mask convention is resolved by the
+    fitter's :class:`~iquana.data.selection.Selection`, never on the object.
     """
+    if is_2d(data):
+        return data
     qmin = getattr(data, 'qmin', None)
     qmax = getattr(data, 'qmax', None)
     data.qmin = data.x.min() if qmin is None else qmin

@@ -5,6 +5,7 @@ import numpy as np
 
 from .data.loader import has_real_data
 from .data.resolution import ResolutionSetting
+from .data.view import intensity, is_2d, n_points, q_magnitude, uncertainty
 from .data.weighting import WeightingSetting
 
 MIN_POSTERIOR_PARAMETER_COUNT = 2
@@ -361,31 +362,40 @@ class FitResultContract:
 
         Only the points included in the fit (inside the Q range, unmasked)
         are exported, so every row carries a fitted intensity and residual.
+        For 2D data the rows are the fitted pixels, with ``Qx`` and ``Qy``
+        columns (and the file's radial/azimuthal widths when it has them).
         """
         fitted_curve = self.require_fitted_curve()
-        has_dx = has_real_data(data.dx)
+        two_d = is_2d(data)
         # A dataset built without uncertainties (Data1D(x=..., y=...)) has
         # dy=None, and a non-dI weighting makes such data fittable. The column
         # stays in the file, as NaN, so every export has the same layout and
         # nothing is passed off as a measured uncertainty: unit weights or the
         # mode's sigma would be a claim the data never made.
-        has_dy = data.dy is not None
+        sigma = uncertainty(data)
+        has_dy = sigma is not None
 
-        index = resolve_fit_index(self.artifacts.fit_index, len(data.x))
-        x = np.asarray(data.x)[index]
-        y = np.asarray(data.y)[index]
-        dy = np.asarray(data.dy)[index] if has_dy else np.full(len(x), np.nan)
-        dx = np.asarray(data.dx)[index] if has_dx else None
+        index = resolve_fit_index(self.artifacts.fit_index, n_points(data))
+        q = q_magnitude(data)[index]
+        y = intensity(data)[index]
+        dy = sigma[index] if has_dy else np.full(len(q), np.nan)
 
-        arrays_to_validate = {
-            'x': x,
-            'y': y,
-            'dy': dy,
-            'fitted_curve': fitted_curve,
-        }
-        if has_dx:
-            arrays_to_validate['dx'] = dx
-        _validate_export_lengths(**arrays_to_validate)
+        columns: dict[str, np.ndarray] = {}
+        if two_d:
+            columns['Qx'] = np.asarray(data.qx_data, dtype=float)[index]
+            columns['Qy'] = np.asarray(data.qy_data, dtype=float)[index]
+            radial, azimuthal = getattr(data, 'dqx_data', None), getattr(data, 'dqy_data', None)
+            if has_real_data(radial) and has_real_data(azimuthal):
+                columns['dQx_radial'] = np.asarray(radial, dtype=float)[index]
+                columns['dQy_azimuthal'] = np.asarray(azimuthal, dtype=float)[index]
+        else:
+            columns['Q'] = q
+            if has_real_data(data.dx):
+                columns['dQ'] = np.asarray(data.dx, dtype=float)[index]
+        columns['I_exp'] = y
+        columns['dI_exp'] = dy
+        columns['I_fit'] = np.asarray(fitted_curve)
+        _validate_export_lengths(**columns)
 
         # The residuals the fit actually minimized, not a re-derivation. The scipy
         # engine unit-weights points whose dI is zero; dividing by the file's dy
@@ -396,7 +406,8 @@ class FitResultContract:
         else:
             with np.errstate(divide='ignore', invalid='ignore'):
                 residuals = (y - fitted_curve) / dy
-        _validate_export_lengths(residuals=residuals, **arrays_to_validate)
+        columns['Residuals'] = residuals
+        _validate_export_lengths(**columns)
 
         # Explicit encoding: the default is the locale codepage, so on a
         # Windows console an export carrying any non-ASCII text (a model name,
@@ -410,8 +421,10 @@ class FitResultContract:
             f.write(f'# Reduced chi-squared: {self.reduced_chisq:.6f}\n')
             if self.resolution is not None:
                 f.write(f'# Resolution mode: {_format_resolution(self.resolution)}\n')
-            f.write(f'# Q range: {x.min():.6g} to {x.max():.6g}\n')
-            f.write(f'# Points fitted: {len(x)} of {len(index)}\n')
+            if two_d:
+                f.write('# Data: 2D\n')
+            f.write(f'# {"|Q|" if two_d else "Q"} range: {q.min():.6g} to {q.max():.6g}\n')
+            f.write(f'# {"Pixels" if two_d else "Points"} fitted: {len(q)} of {len(index)}\n')
             f.write(f'# Free parameters: {self.n_free}\n')
             f.write(f'# Degrees of freedom: {self.dof}\n')
             if self.weighting is not None:
@@ -444,24 +457,14 @@ class FitResultContract:
                     )
             f.write('#\n')
 
-            if has_dx:
-                # The exported dQ is the dataset's own column. Under a custom
-                # resolution mode it is not the width the fit smeared with —
-                # that is on the '# Resolution mode' line above. Likewise
-                # dI_exp (both branches): under a non-dI weighting mode it is
-                # not the σ the fit divided by; that is on the
-                # '# Weighting mode' line.
-                f.write('Q,dQ,I_exp,dI_exp,I_fit,Residuals\n')
-                for q, dq, i_exp, di_exp, i_fit, res in zip(
-                    x, dx, y, dy, fitted_curve, residuals, strict=True
-                ):
-                    f.write(f'{q:.6e},{dq:.6e},{i_exp:.6e},{di_exp:.6e},{i_fit:.6e},{res:.6e}\n')
-            else:
-                f.write('Q,I_exp,dI_exp,I_fit,Residuals\n')
-                for q, i_exp, di_exp, i_fit, res in zip(
-                    x, y, dy, fitted_curve, residuals, strict=True
-                ):
-                    f.write(f'{q:.6e},{i_exp:.6e},{di_exp:.6e},{i_fit:.6e},{res:.6e}\n')
+            # The exported dQ columns are the dataset's own. Under a custom
+            # resolution mode they are not the widths the fit smeared with —
+            # that is on the '# Resolution mode' line above. Likewise dI_exp:
+            # under a non-dI weighting mode it is not the σ the fit divided
+            # by; that is on the '# Weighting mode' line.
+            f.write(','.join(columns) + '\n')
+            for row in zip(*columns.values(), strict=True):
+                f.write(','.join(f'{value:.6e}' for value in row) + '\n')
 
 
 def save_fit_result(
